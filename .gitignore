@@ -25,6 +25,7 @@ data/*
 # Keeps data/dataset/ present in a clone so Docker does not create it as
 # root on Linux; its contents stay ignored.
 !data/dataset/
+data/dataset/*
 !data/dataset/.gitkeep
 models/*
 !models/.gitkeep
