@@ -4,7 +4,7 @@ name: CI
 # breaks another track's imports is caught before the merge, not on the
 # first joint build. ruff, and pytest against throwaway Postgres and
 # Redis service containers. No image builds and no compose beyond config
-# validation: see docs/specs/2026-09-22-backend-template-design.md §6.
+# validation: see docs/specs/system-design.md.
 
 on:
   push:
@@ -62,7 +62,7 @@ jobs:
             {"name": "common", "dir": "packages/common", "requirements": "services/api/requirements.txt", "check_migrations": true, "paths": "^services/api/requirements[.]txt$"},
             {"name": "contracts", "dir": "packages/contracts", "requirements": "services/api/requirements.txt", "paths": "^packages/contracts/"}
           ]'
-          shared='^(packages/|migrations/|requirements-dev\.txt$|pyproject\.toml$|\.github/workflows/)'
+          shared='^(packages/|migrations/|config/|requirements-dev\.txt$|pyproject\.toml$|\.github/workflows/)'
 
           tests=$(printf '%s\n' "$files" | jq -Rnc \
             --argjson jobs "$jobs" --arg shared "$shared" --argjson all "$all" '
