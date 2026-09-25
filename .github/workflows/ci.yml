@@ -59,7 +59,8 @@ jobs:
             {"name": "ingest", "dir": "services/ingest", "requirements": "services/ingest/requirements.txt", "paths": "^services/ingest/"},
             {"name": "matcher", "dir": "services/matcher", "requirements": "services/matcher/requirements.txt", "paths": "^services/matcher/"},
             {"name": "predictor", "dir": "services/predictor", "requirements": "services/predictor/requirements.txt", "paths": "^services/predictor/"},
-            {"name": "common", "dir": "packages/common", "requirements": "services/api/requirements.txt", "check_migrations": true, "paths": "^services/api/requirements[.]txt$"}
+            {"name": "common", "dir": "packages/common", "requirements": "services/api/requirements.txt", "check_migrations": true, "paths": "^services/api/requirements[.]txt$"},
+            {"name": "contracts", "dir": "packages/contracts", "requirements": "services/api/requirements.txt", "paths": "^packages/contracts/"}
           ]'
           shared='^(packages/|migrations/|requirements-dev\.txt$|pyproject\.toml$|\.github/workflows/)'
 
