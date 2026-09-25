@@ -1,5 +1,7 @@
 """ML core service. Until a trained model is in place it answers with the
-organizers' baseline: the predicted delay equals the current deviation."""
+organizers' baseline: the predicted delay equals the current deviation.
+When MODEL_DIR is absent or empty the service keeps answering with this
+baseline, so the system starts without a trained model."""
 
 from fastapi import FastAPI
 
