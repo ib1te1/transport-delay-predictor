@@ -199,12 +199,16 @@ stops_plan    stop_id bigint PK, tr_id bigint, time_plan timestamptz,
 - расписание → `stops_plan`, **без `time_fact_begin`**;
 - `traffic.csv` → пары `tr_id`, `unit_id` → `vehicles`.
 
-Время переводится из наивного в UTC. Повторный запуск идемпотентен:
-upsert по ключам.
+Время переводится из наивного в UTC. Повторный запуск заменяет
+справочники: при наличии файлов обе таблицы очищаются и загружаются
+заново в одной транзакции; без датасета ничего не меняется.
 
 ## 11. Конфиг
 
 ```yaml
+dataset:
+  source_timezone: UTC
+
 api:
   scoring_period_sec: 60
   stale_after_sec: 120
@@ -220,7 +224,6 @@ api:
 
 seed:
   period: test
-  source_timezone: UTC
 ```
 
 ## 12. Тесты
