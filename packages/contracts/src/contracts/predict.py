@@ -8,6 +8,8 @@ from contracts._base import Contract
 
 def make_sample_id(tr_id: int, t: datetime) -> str:
     """Prediction point id in the organizers' format: ``<tr_id>_<unix seconds of T>``."""
+    if t.utcoffset() is None:
+        raise ValueError("make_sample_id requires an aware datetime, got a naive one")
     return f"{tr_id}_{int(t.timestamp())}"
 
 

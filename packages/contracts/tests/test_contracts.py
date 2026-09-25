@@ -35,6 +35,11 @@ def test_sample_id_matches_the_organizers_format():
     assert make_sample_id(131672, T) == "131672_1767670500"
 
 
+def test_sample_id_rejects_a_naive_datetime():
+    with pytest.raises(ValueError, match="aware"):
+        make_sample_id(131672, datetime(2026, 1, 6, 3, 35))
+
+
 def test_naive_datetime_is_rejected():
     with pytest.raises(ValidationError):
         telemetry(event_time=datetime(2026, 1, 6, 3, 35))
