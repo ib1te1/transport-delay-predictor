@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -57,6 +57,13 @@ def test_unknown_source_is_rejected():
 
 def test_telemetry_without_schedule_match_is_allowed():
     assert telemetry(tr_id=None).tr_id is None
+
+
+def test_non_utc_offset_is_normalized_to_utc():
+    plus_three = datetime(2026, 1, 6, 6, 35, tzinfo=timezone(timedelta(hours=3)))
+    normalized = telemetry(event_time=plus_three).event_time
+    assert normalized == T
+    assert normalized.utcoffset() == timedelta(0)
 
 
 def test_stop_event_round_trips_through_json():

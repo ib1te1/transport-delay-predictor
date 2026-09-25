@@ -1,6 +1,4 @@
-from pydantic import AwareDatetime
-
-from contracts._base import Contract
+from contracts._base import Contract, UtcDatetime
 
 
 class StopEvent(Contract):
@@ -8,6 +6,6 @@ class StopEvent(Contract):
 
     tr_id: int
     stop_id: int
-    time_plan: AwareDatetime
-    time_fact: AwareDatetime
+    time_plan: UtcDatetime
+    time_fact: UtcDatetime
     delay_s: float

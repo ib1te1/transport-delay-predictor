@@ -1,9 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import AwareDatetime
-
-from contracts._base import Contract
+from contracts._base import Contract, UtcDatetime
 
 
 def make_sample_id(tr_id: int, t: datetime) -> str:
@@ -14,7 +12,7 @@ def make_sample_id(tr_id: int, t: datetime) -> str:
 
 
 class TelemetryPoint(Contract):
-    event_time: AwareDatetime
+    event_time: UtcDatetime
     lat: float | None
     lon: float | None
     location_valid: bool
@@ -26,10 +24,10 @@ class ScheduledStop(Contract):
     """A planned stop of the vehicle; ``time_fact`` only if passed no later than T."""
 
     stop_id: int
-    time_plan: AwareDatetime
+    time_plan: UtcDatetime
     lat: float
     lon: float
-    time_fact: AwareDatetime | None
+    time_fact: UtcDatetime | None
 
 
 class PredictRequest(Contract):
@@ -37,9 +35,9 @@ class PredictRequest(Contract):
 
     sample_id: str
     tr_id: int
-    T: AwareDatetime
+    T: UtcDatetime
     target_stop_id: int
-    target_time_begin: AwareDatetime
+    target_time_begin: UtcDatetime
     cur_dev_s: float | None
     telemetry: list[TelemetryPoint]
     schedule: list[ScheduledStop]

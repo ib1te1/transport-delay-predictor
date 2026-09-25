@@ -1,8 +1,6 @@
 from typing import Literal
 
-from pydantic import AwareDatetime
-
-from contracts._base import Contract
+from contracts._base import Contract, UtcDatetime
 
 
 class TelemetryRecord(Contract):
@@ -14,7 +12,7 @@ class TelemetryRecord(Contract):
 
     tr_id: int | None
     unit_id: int
-    event_time: AwareDatetime
+    event_time: UtcDatetime
     lat: float | None
     lon: float | None
     location_valid: bool
