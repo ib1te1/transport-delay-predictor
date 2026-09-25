@@ -10,6 +10,8 @@
 [tool.ruff]
 target-version = "py313"
 line-length = 100
+# Python blocks in docs/ are illustrative sketches for readers, not source.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 # E/F/W — pycodestyle and pyflakes, I — import order, UP — syntax that
