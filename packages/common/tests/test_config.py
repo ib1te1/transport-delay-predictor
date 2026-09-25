@@ -103,6 +103,8 @@ def test_service_settings_defaults_point_into_the_repository(
 ) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://x")
     monkeypatch.setenv("REDIS_URL", "redis://x")
+    monkeypatch.delenv("CONFIG_PATH", raising=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
     settings = ServiceSettings(_env_file=None)
     assert settings.config_path == REPO_ROOT / "config" / "system.yaml"
     assert settings.data_dir == REPO_ROOT / "data" / "dataset"
