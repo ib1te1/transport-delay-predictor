@@ -1,12 +1,15 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from typing import Any
 
 from fastapi import FastAPI, WebSocket
+from fastapi.openapi.utils import get_openapi
 
 from app.config import ApiConfig
 from app.loop import run_prediction_loop
 from app.predictor_client import PredictorClient
+from app.schemas import ws_message_schemas
 from app.ws import Hub, relay
 from common.bus import DASHBOARD_CHANNEL
 from common.config import ServiceSettings, load_section
@@ -40,6 +43,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="api", lifespan=lifespan)
+
+
+def openapi_with_ws_messages() -> dict[str, Any]:
+    """FastAPI's schema plus ``WsMessage`` and its parts, built once and cached.
+
+    No endpoint returns ``WsMessage``, so FastAPI would leave it out; the
+    frontend generates the WebSocket message types from here all the same.
+    """
+    if app.openapi_schema is None:
+        schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+        components = schema.setdefault("components", {}).setdefault("schemas", {})
+        for name, definition in ws_message_schemas("#/components/schemas/{model}").items():
+            components.setdefault(name, definition)
+        app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = openapi_with_ws_messages
 
 
 @app.get("/health")
