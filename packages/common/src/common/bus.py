@@ -1,4 +1,4 @@
-"""Redis pub/sub between predictor and api.
+"""Redis messaging between the services: Streams for data, pub/sub for fan-out.
 
 A bus, not a store: nothing published is kept, and a subscriber that was
 not listening at the moment misses the message. After (re)connecting,
@@ -64,6 +64,61 @@ async def subscribe(redis: AsyncRedis, channel: str) -> AsyncIterator[BusMessage
             yield message
     finally:
         await pubsub.aclose()
+
+
+# Streams carry the data flow between services. Unlike pub/sub, a reader
+# that restarts continues from the last id it saw instead of losing what
+# was published meanwhile.
+TELEMETRY_STREAM = "telemetry"
+STOP_EVENTS_STREAM = "stop_events"
+PREDICTIONS_STREAM = "predictions"
+
+# Approximate cap per stream; old entries are trimmed. The database, not
+# the bus, is the history.
+STREAM_MAXLEN = 200_000
+
+
+def append(redis: Redis, stream: str, message: BaseModel, *, maxlen: int = STREAM_MAXLEN) -> str:
+    """Append a model as one stream entry; returns the entry id."""
+    entry_id = redis.xadd(
+        stream, {"data": message.model_dump_json()}, maxlen=maxlen, approximate=True
+    )
+    return entry_id.decode() if isinstance(entry_id, bytes) else entry_id
+
+
+async def read_stream[M: BaseModel](
+    redis: AsyncRedis,
+    stream: str,
+    model: type[M],
+    *,
+    last_id: str = "$",
+    block_ms: int = 5000,
+    count: int = 500,
+) -> AsyncIterator[tuple[str, M]]:
+    """Yield ``(entry_id, model)`` for entries after ``last_id``, forever.
+
+    ``"$"`` means "only what arrives from now on"; pass a saved id to
+    resume, or ``"0"`` to read from the start. A malformed entry is logged
+    and skipped. Connection errors propagate: reconnecting is the caller's
+    decision, and the caller resumes from the last id it received.
+    """
+    if last_id == "$":
+        newest = await redis.xrevrange(stream, count=1)
+        last_id = _decode(newest[0][0]) if newest else "0"
+    while True:
+        batches = await redis.xread({stream: last_id}, count=count, block=block_ms)
+        for _name, entries in batches or []:
+            for raw_id, fields in entries:
+                last_id = _decode(raw_id)
+                raw = fields.get(b"data", fields.get("data"))
+                try:
+                    yield last_id, model.model_validate_json(raw)
+                except ValidationError:
+                    log.warning("dropping malformed entry %s on %s: %.200r", last_id, stream, raw)
+
+
+def _decode(value: bytes | str) -> str:
+    return value.decode() if isinstance(value, bytes) else value
 
 
 def main(argv: Sequence[str] | None = None) -> int:
