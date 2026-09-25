@@ -1,8 +1,10 @@
-"""Postgres side of the prediction loop: the plan in, prediction rows out.
+"""Postgres side of api: the plan in, prediction rows out and back.
 
-Synchronous like the rest of ``common.db``; the loop calls these through
-``asyncio.to_thread``.
+Synchronous like the rest of ``common.db``; callers on the event loop go
+through ``asyncio.to_thread``.
 """
+
+from datetime import datetime
 
 import psycopg
 
@@ -32,3 +34,29 @@ def save_predictions(conn: psycopg.Connection, rows: list[PredictionRow]) -> Non
     after a restart must not rewrite a prediction already shown.
     """
     insert_models(conn, "predictions", rows, on_conflict="ON CONFLICT (sample_id) DO NOTHING")
+
+
+def load_latest_predictions(conn: psycopg.Connection, since: datetime) -> list[PredictionRow]:
+    """The newest prediction of each vehicle made at ``since`` or later, by ``tr_id``.
+
+    Restores the current predictions after a restart; whether each still
+    applies is decided by the caller.
+    """
+    return fetch_models(
+        conn,
+        PredictionRow,
+        "SELECT DISTINCT ON (tr_id) * FROM predictions WHERE t >= %s ORDER BY tr_id, t DESC",
+        (since,),
+    )
+
+
+def load_vehicle_predictions(
+    conn: psycopg.Connection, tr_id: int, since: datetime
+) -> list[PredictionRow]:
+    """The vehicle's predictions made at ``since`` or later, newest first."""
+    return fetch_models(
+        conn,
+        PredictionRow,
+        "SELECT * FROM predictions WHERE tr_id = %s AND t >= %s ORDER BY t DESC",
+        (tr_id, since),
+    )
