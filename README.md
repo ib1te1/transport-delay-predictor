@@ -1,4 +1,50 @@
 # Предиктор изменений в графике движения наземного транспорта
 
-Прогноз отклонений от расписания городского наземного транспорта и
-дашборд с рисками срыва графика.
+Прогноз отклонения от расписания городского наземного транспорта за 10–15
+минут до события и дашборд диспетчера с уровнем риска.
+
+Система из трёх модулей: ML-ядро (`predictor`), бэкенд (`ingest`,
+`matcher`, `api`) и дашборд (`web`). Устройство — в
+`docs/specs/system-design.md`, условия задачи — в `docs/case-brief.md`.
+
+## Запуск
+
+1. Распаковать раздачу организаторов как есть в `data/dataset/`, чтобы
+   получилось `data/dataset/train/`, `data/dataset/test/`,
+   `data/dataset/validate/` и т. д. Без датасета система тоже поднимется,
+   но без расписания и прогнозов.
+2. При необходимости: `cp .env.example .env` и поправить порты.
+3. Поднять:
+
+   ```bash
+   docker compose up --build
+   ```
+
+Порядок старта: Postgres и Redis → `migrate` (миграции) → `seed`
+(расписание периода из `config/system.yaml`) → сервисы.
+
+| Что | Адрес |
+| --- | --- |
+| Дашборд | <http://localhost:5173> |
+| API и Swagger | <http://localhost:8000/docs> |
+| Swagger ML-ядра | <http://localhost:8003/docs> |
+
+## Настройки
+
+`config/system.yaml` — по секции на сервис; сервис читает только свою.
+Переменные окружения (порты, адреса) — в `.env.example`.
+
+## Разработка
+
+Python 3.13, Node 24. Тесты пакета или сервиса запускаются из его папки:
+
+```bash
+py -3.13 -m venv .venv
+.venv/Scripts/python -m pip install -r services/api/requirements.txt -r migrations/requirements.txt -r requirements-dev.txt
+.venv/Scripts/python -m pip install --no-deps -e packages/contracts -e packages/common
+docker compose up -d postgres redis
+cd services/api && ../../.venv/Scripts/python -m pytest
+```
+
+Тестам с базой нужны `DATABASE_URL` и `REDIS_URL`; без них такие тесты
+пропускаются.
