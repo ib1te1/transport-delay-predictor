@@ -1,6 +1,11 @@
 # Runtime settings, one top-level section per service. Each service reads
 # only its own section and rejects unknown keys in it. A value that changes
-# behaviour lives here, not in code.
+# behaviour lives here, not in code. Exception: the shared `dataset`
+# section below, which any service may read; the backend owns it.
+
+dataset:
+  # Dataset timestamps carry no zone; they are read in this one.
+  source_timezone: UTC
 
 api:
   # Prediction tick, in dataset time.
@@ -25,8 +30,6 @@ api:
 seed:
   # Dataset part loaded as the demo period: train | test | validate.
   period: test
-  # Dataset timestamps carry no zone; they are read in this one.
-  source_timezone: UTC
 
 ingest: {}
 matcher: {}

@@ -25,7 +25,7 @@ x-backend: &backend
       condition: service_healthy
     redis:
       condition: service_healthy
-    migrate:
+    seed:
       condition: service_completed_successfully
   healthcheck: *backend-healthcheck
 
@@ -73,6 +73,22 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # Loads the demo period's planned stops and terminal ids, then exits.
+  # Runs from the api image: the loader is api code.
+  seed:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    command: ["python", "-m", "app.seed"]
+    environment: *backend-env
+    volumes:
+      - ./config:/config:ro
+      - ./data/dataset:/data:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   # The NDTP listener port is added here by the ingest track.
   ingest:
     <<: *backend
@@ -91,11 +107,27 @@ services:
     ports:
       - "127.0.0.1:8002:8000"
 
+  # Does not need reference data, so it does not wait for seed: a bad
+  # dataset row must never block the ML service from starting.
   predictor:
     <<: *backend
     build:
       context: .
       dockerfile: services/predictor/Dockerfile
+    environment:
+      <<: *backend-env
+      MODEL_DIR: /models/current
+    volumes:
+      - ./config:/config:ro
+      - ./data/dataset:/data:ro
+      - ./models:/models:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:8003:8000"
     # Longer start_period than the rest: importing CatBoost is the slow

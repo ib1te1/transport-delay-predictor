@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import ApiConfig, RiskConfig, SeedConfig
-from common.config import REPO_ROOT, load_section
+from common.config import REPO_ROOT, load_dataset_config, load_section
 
 SYSTEM_YAML = REPO_ROOT / "config" / "system.yaml"
 
@@ -15,6 +15,10 @@ def test_repository_config_has_valid_api_section():
 
 def test_repository_config_has_valid_seed_section():
     assert load_section(SYSTEM_YAML, "seed", SeedConfig).period == "test"
+
+
+def test_repository_config_has_valid_dataset_section():
+    assert load_dataset_config(SYSTEM_YAML).source_timezone == "UTC"
 
 
 def test_risk_config_rejects_a_swapped_green_pair():

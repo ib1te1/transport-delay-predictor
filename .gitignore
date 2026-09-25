@@ -22,8 +22,14 @@ dist/
 data/*
 !data/fixtures/
 !data/fixtures/**
+# Keeps data/dataset/ present in a clone so Docker does not create it as
+# root on Linux; its contents stay ignored.
+!data/dataset/
+!data/dataset/.gitkeep
 models/*
 !models/.gitkeep
+# The current model artifact is committed: the system must start without training.
+!models/current/
 *.parquet
 *.csv
 !data/fixtures/**/*.csv

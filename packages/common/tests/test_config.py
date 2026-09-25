@@ -1,4 +1,5 @@
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -6,8 +7,10 @@ from pydantic import BaseModel, ValidationError
 from common.config import (
     REPO_ROOT,
     ConfigError,
+    DatasetConfig,
     ServiceSettings,
     StrictModel,
+    load_dataset_config,
     load_section,
     load_yaml,
 )
@@ -109,6 +112,24 @@ def test_service_settings_defaults_point_into_the_repository(
     assert settings.config_path == REPO_ROOT / "config" / "system.yaml"
     assert settings.data_dir == REPO_ROOT / "data" / "dataset"
     assert settings.config_path.is_file()
+
+
+def test_dataset_config_valid_zone_loads() -> None:
+    config = DatasetConfig(source_timezone="Europe/Moscow")
+    assert config.zone == ZoneInfo("Europe/Moscow")
+
+
+def test_dataset_config_rejects_an_unknown_zone() -> None:
+    with pytest.raises(ValidationError, match="Mars/Olympus"):
+        DatasetConfig(source_timezone="Mars/Olympus")
+
+
+def test_load_dataset_config_names_the_field_on_an_unknown_zone(tmp_path: Path) -> None:
+    path = tmp_path / "system.yaml"
+    path.write_text("dataset:\n  source_timezone: Mars/Olympus\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="dataset.source_timezone"):
+        load_dataset_config(path)
 
 
 class _Section(StrictModel):

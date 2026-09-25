@@ -168,7 +168,7 @@ alerts
   lead_time_s          double precision NULL
   unique (tr_id, target_stop_id) where status = 'open'
 
-vehicles      tr_id bigint PK, unit_id bigint unique
+vehicles      unit_id bigint PK, tr_id bigint, index (tr_id)
 stops_plan    stop_id bigint PK, tr_id bigint, time_plan timestamptz,
               lat double precision, lon double precision, address text
               index (tr_id, time_plan)
@@ -199,12 +199,16 @@ stops_plan    stop_id bigint PK, tr_id bigint, time_plan timestamptz,
 - расписание → `stops_plan`, **без `time_fact_begin`**;
 - `traffic.csv` → пары `tr_id`, `unit_id` → `vehicles`.
 
-Время переводится из наивного в UTC. Повторный запуск идемпотентен:
-upsert по ключам.
+Время переводится из наивного в UTC. Повторный запуск заменяет
+справочники: при наличии файлов обе таблицы очищаются и загружаются
+заново в одной транзакции; без датасета ничего не меняется.
 
 ## 11. Конфиг
 
 ```yaml
+dataset:
+  source_timezone: UTC
+
 api:
   scoring_period_sec: 60
   stale_after_sec: 120
@@ -220,7 +224,6 @@ api:
 
 seed:
   period: test
-  source_timezone: UTC
 ```
 
 ## 12. Тесты

@@ -11,9 +11,10 @@ optional there.
 """
 
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # packages/common/src/common/config.py -> repository root.
@@ -77,6 +78,30 @@ def load_section[M: BaseModel](path: Path | str, section: str, model: type[M]) -
     if section not in raw:
         raise ConfigError(f"{path}: no section {section!r}")
     return _validate(path, raw[section], model, prefix=f"{section}.")
+
+
+class DatasetConfig(StrictModel):
+    """The one config section every service may read; the backend owns it."""
+
+    source_timezone: str = "UTC"
+
+    @field_validator("source_timezone")
+    @classmethod
+    def _check_known_zone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"unknown time zone: {value!r}") from exc
+        return value
+
+    @property
+    def zone(self) -> ZoneInfo:
+        return ZoneInfo(self.source_timezone)
+
+
+def load_dataset_config(path: Path | str) -> DatasetConfig:
+    """Load the shared ``dataset`` section."""
+    return load_section(path, "dataset", DatasetConfig)
 
 
 class ServiceSettings(BaseSettings):
