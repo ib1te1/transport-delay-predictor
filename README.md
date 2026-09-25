@@ -36,15 +36,28 @@
 
 ## Разработка
 
-Python 3.13, Node 24. Тесты пакета или сервиса запускаются из его папки:
+Python 3.13, Node 24. Команды ниже — для Git Bash на Windows; на
+Linux/macOS вместо `py -3.13` и `.venv/Scripts/` — `python3.13` и
+`.venv/bin/`.
 
 ```bash
 py -3.13 -m venv .venv
 .venv/Scripts/python -m pip install -r services/api/requirements.txt -r migrations/requirements.txt -r requirements-dev.txt
 .venv/Scripts/python -m pip install --no-deps -e packages/contracts -e packages/common
 docker compose up -d postgres redis
+.venv/Scripts/alembic -c migrations/alembic.ini upgrade head
+export DATABASE_URL=postgresql://delay_predictor:delay_predictor@localhost:5432/delay_predictor REDIS_URL=redis://localhost:6379/0
 cd services/api && ../../.venv/Scripts/python -m pytest
 ```
 
-Тестам с базой нужны `DATABASE_URL` и `REDIS_URL`; без них такие тесты
-пропускаются.
+Тесты не читают `.env`: `DATABASE_URL` и `REDIS_URL` нужно экспортировать
+в шелле, как показано выше (порты — из `.env.example`), иначе тесты с
+базой и Redis пропускаются. Тесты пакета или сервиса запускаются из его
+папки.
+
+После смены периода в `config/system.yaml` (секция `seed`) справочники
+перезагружаются так:
+
+```bash
+docker compose run --rm seed
+```
