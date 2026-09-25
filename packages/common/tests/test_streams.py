@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
 
-from common.bus import append, read_stream
+from common.bus import append, append_async, read_stream
 
 
 class Sample(BaseModel):
@@ -57,3 +57,18 @@ async def test_read_stream_from_now_skips_history(redis_url: str) -> None:
         await client.aclose()
 
     assert message.n == 2
+
+
+@pytest.mark.anyio
+async def test_append_async_is_readable_like_append(redis_url: str) -> None:
+    stream = f"test-{uuid4().hex}"
+    client = AsyncRedis.from_url(redis_url)
+    try:
+        entry_id = await append_async(client, stream, Sample(n=1))
+        async with aclosing(read_stream(client, stream, Sample, last_id="0", block_ms=100)) as it:
+            got_id, message = await it.__anext__()
+    finally:
+        await client.delete(stream)
+        await client.aclose()
+
+    assert (got_id, message.n) == (entry_id, 1)

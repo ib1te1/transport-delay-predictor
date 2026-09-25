@@ -83,12 +83,25 @@ PREDICTIONS_STREAM = "predictions"
 STREAM_MAXLEN = 200_000
 
 
+def _stream_fields(message: BaseModel) -> dict[str, str]:
+    return {"data": message.model_dump_json()}
+
+
 def append(redis: Redis, stream: str, message: BaseModel, *, maxlen: int = STREAM_MAXLEN) -> str:
     """Append a model as one stream entry; returns the entry id."""
-    entry_id = redis.xadd(
-        stream, {"data": message.model_dump_json()}, maxlen=maxlen, approximate=True
-    )
-    return entry_id.decode() if isinstance(entry_id, bytes) else entry_id
+    entry_id = redis.xadd(stream, _stream_fields(message), maxlen=maxlen, approximate=True)
+    return _decode(entry_id)
+
+
+async def append_async(
+    redis: AsyncRedis, stream: str, message: BaseModel, *, maxlen: int = STREAM_MAXLEN
+) -> str:
+    """Append a model as one stream entry; returns the entry id.
+
+    Same as ``append``, for callers already on the async Redis client.
+    """
+    entry_id = await redis.xadd(stream, _stream_fields(message), maxlen=maxlen, approximate=True)
+    return _decode(entry_id)
 
 
 async def read_stream[M: BaseModel](
