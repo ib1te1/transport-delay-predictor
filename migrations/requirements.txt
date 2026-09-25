@@ -1,0 +1,6 @@
+# Exact pins, resolved inside python:3.13-slim. psycopg matches the
+# services' pin on purpose: CI installs this file into the same
+# environment as a service's requirements.txt.
+alembic==1.20.0
+SQLAlchemy==2.0.54
+psycopg[binary]==3.3.6

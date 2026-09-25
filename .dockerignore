@@ -1,0 +1,14 @@
+# Service images build with the repository root as context (see
+# docker-compose.yml). A whitelist: without it web/node_modules, data/,
+# models/ and .git would all be sent to the daemon on every build.
+*
+!packages/
+!services/
+
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.egg-info/
+**/tests/
+**/conftest.py

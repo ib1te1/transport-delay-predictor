@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "common"
+version = "0.1.0"
+description = "Database, bus, config and test plumbing shared by the backend services."
+requires-python = "==3.13.*"
+# Compatible ranges only. Exact versions are pinned by each service in its
+# requirements.txt: the library states what it works with, the
+# application decides what it runs.
+dependencies = [
+  "pydantic>=2.13,<3",
+  "pydantic-settings>=2.15,<3",
+  "psycopg[binary,pool]>=3.3,<3.4",
+  "redis>=8.1,<9",
+  "pyyaml>=6.0,<7",
+]
+
+# The runtime does not need pytest; only common.testing, the fixtures
+# module below, imports it.
+[project.optional-dependencies]
+test = ["pytest>=9,<10"]
+
+# Loaded by pytest wherever common is installed, so every service gets the
+# database and Redis fixtures without a conftest line.
+[project.entry-points.pytest11]
+common = "common.testing"

@@ -1,0 +1,188 @@
+name: CI
+
+# Five people merge into main in parallel; this exists so a branch that
+# breaks another track's imports is caught before the merge, not on the
+# first joint build. ruff, and pytest against throwaway Postgres and
+# Redis service containers. No image builds and no compose beyond config
+# validation: see docs/specs/system-design.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Private repository on a free account: Actions minutes are capped, and
+  # every test job pays for its own Postgres and Redis. So a PR runs the
+  # test jobs only for what it touched. A service's own directory selects
+  # that service; anything every service builds on (packages, migrations,
+  # dev requirements, this workflow) selects all of them. lint is cheap
+  # and always runs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.select.outputs.tests }}
+      web: ${{ steps.select.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          all=false
+          if [ "$EVENT" = pull_request ]; then
+            files=$(git diff --name-only "$PR_BASE"...HEAD)
+          elif git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
+            files=$(git diff --name-only "$PUSH_BEFORE" HEAD)
+          else
+            # First push or rewritten history: nothing to diff against.
+            files=""
+            all=true
+          fi
+          printf '%s\n' "$files"
+
+          # One entry per test job; "paths" selects it in addition to the
+          # shared paths. common pins nothing itself and is tested against
+          # api's pins, the superset of what it imports, so those pins
+          # select it too. Migration checks live in common only: the other
+          # jobs apply migrations just to get a schema.
+          jobs='[
+            {"name": "api", "dir": "services/api", "requirements": "services/api/requirements.txt", "paths": "^services/api/"},
+            {"name": "ingest", "dir": "services/ingest", "requirements": "services/ingest/requirements.txt", "paths": "^services/ingest/"},
+            {"name": "matcher", "dir": "services/matcher", "requirements": "services/matcher/requirements.txt", "paths": "^services/matcher/"},
+            {"name": "predictor", "dir": "services/predictor", "requirements": "services/predictor/requirements.txt", "paths": "^services/predictor/"},
+            {"name": "common", "dir": "packages/common", "requirements": "services/api/requirements.txt", "check_migrations": true, "paths": "^services/api/requirements[.]txt$"},
+            {"name": "contracts", "dir": "packages/contracts", "requirements": "services/api/requirements.txt", "paths": "^packages/contracts/"}
+          ]'
+          shared='^(packages/|migrations/|config/|requirements-dev\.txt$|pyproject\.toml$|\.github/workflows/)'
+
+          tests=$(printf '%s\n' "$files" | jq -Rnc \
+            --argjson jobs "$jobs" --arg shared "$shared" --argjson all "$all" '
+            [inputs | select(length > 0)] as $files
+            | ($all or any($files[]; test($shared))) as $every
+            | [$jobs[] | . as $job
+               | select($every or any($files[]; test($job.paths)))
+               | del(.paths)]')
+          if $all || printf '%s\n' "$files" | grep -Eq '^(web/|\.github/workflows/)'; then
+            web=true
+          else
+            web=false
+          fi
+          echo "tests=$tests" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "tests=$tests"
+          echo "web=$web"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      # Renders and validates the compose file without building images or
+      # starting containers: catches broken YAML anchors, bad interpolation,
+      # or a depends_on target that does not exist. The one file all five
+      # tracks edit and nothing else here covers.
+      - run: docker compose config -q
+
+  test:
+    name: test (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.tests != '[]'
+    runs-on: ubuntu-latest
+    # A WebSocket test that never gets its message blocks for good; this
+    # caps it at minutes instead of the six-hour default.
+    timeout-minutes: 15
+    strategy:
+      # Without this, one failing service hides the state of the others,
+      # and the owner of each track learns nothing about their own.
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.tests) }}
+    # Every test job gets both, including services whose tests do not use
+    # them yet: the first database test in a track then needs no CI change.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      REDIS_URL: redis://localhost:6379/0
+      # A missing variable fails the test instead of skipping it, so a
+      # broken setup cannot pass as green with everything skipped.
+      REQUIRE_INFRA: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            ${{ matrix.requirements }}
+            migrations/requirements.txt
+            requirements-dev.txt
+      - run: pip install -r ${{ matrix.requirements }} -r migrations/requirements.txt -r requirements-dev.txt
+      - run: pip install --no-deps -e packages/contracts -e packages/common
+      - run: pip check
+      - name: Single migration head
+        if: matrix.check_migrations
+        run: |
+          alembic -c migrations/alembic.ini heads
+          test "$(alembic -c migrations/alembic.ini heads | grep -c '(head)')" -eq 1
+      - name: Migrate an empty database
+        run: alembic -c migrations/alembic.ini upgrade head
+      # Run from the package directory: every service ships a package
+      # named "app", and a single run from the root would bind it to one.
+      - run: pytest
+        working-directory: ${{ matrix.dir }}
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      # Type check and bundle. The dashboard has no tests yet; until it
+      # does, a build that does not compile is what CI catches here.
+      - run: npm run build
+        working-directory: web
