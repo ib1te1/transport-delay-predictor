@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-import app.main as main_module
 import app.ws as ws_module
 from app.dashboard import Dashboard
 from app.live import LiveState
@@ -120,21 +119,6 @@ async def test_relay_resets_backoff_after_a_delivered_message(
 
     assert delays == [0.5, 1.0, 0.5, 1.0]
     assert socket.sent == [message.model_dump_json()]
-
-
-@pytest.fixture
-def no_prediction_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the background prediction loop with a no-op that waits for cancellation.
-
-    Without this, entering the lifespan runs the real loop against the
-    shared dev Redis and Postgres, scoring against the default streams
-    instead of the unique ones tests are supposed to use.
-    """
-
-    async def wait_until_cancelled(*args, **kwargs) -> None:
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(main_module, "run_prediction_loop", wait_until_cancelled)
 
 
 # database_url is not used directly: TestClient(app) runs the lifespan,
