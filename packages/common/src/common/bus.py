@@ -1,10 +1,14 @@
 """Redis messaging between the services: Streams for data, pub/sub for fan-out.
 
-A bus, not a store: nothing published is kept, and a subscriber that was
-not listening at the moment misses the message. After (re)connecting,
-the dashboard fetches state over REST, not from here.
+Streams (``append``/``read_stream``) carry the data flow between services —
+``telemetry``, ``stop_events``, ``predictions`` — and keep their entries up
+to the approximate cap, so a reader that restarts resumes instead of losing
+what it missed. Pub/sub (``publish``/``subscribe``, ``BusMessage``) is only
+the api's fan-out to dashboard WebSockets: nothing published there is kept,
+and a subscriber that was not listening at the moment misses the message.
+After (re)connecting, the dashboard fetches state over REST, not from here.
 
-Manual publishing, for testing a subscriber without predictor:
+Manual publishing, for testing the dashboard relay without api:
 
     python -m common.bus dashboard '{"type": "ping", "data": {}}'
 """
@@ -21,12 +25,13 @@ from redis.asyncio import Redis as AsyncRedis
 
 log = logging.getLogger(__name__)
 
-# The one channel predictor publishes to and api relays to WebSockets.
+# The one channel api relays to dashboard WebSockets; predictor publishes
+# nothing, it only answers PredictRequest over HTTP.
 DASHBOARD_CHANNEL = "dashboard"
 
 
 class BusMessage(BaseModel):
-    """Envelope for everything on the bus.
+    """Envelope for pub/sub messages.
 
     The dashboard decides what to refresh by ``type``; the types and their
     ``data`` are defined together with the contracts.
@@ -100,7 +105,9 @@ async def read_stream[M: BaseModel](
     ``"$"`` means "only what arrives from now on"; pass a saved id to
     resume, or ``"0"`` to read from the start. A malformed entry is logged
     and skipped. Connection errors propagate: reconnecting is the caller's
-    decision, and the caller resumes from the last id it received.
+    decision, and the caller resumes from the last id it received. Entries
+    older than the approximate ``STREAM_MAXLEN`` cap are trimmed; a reader
+    resuming from a trimmed id continues from the oldest surviving entry.
     """
     if last_id == "$":
         newest = await redis.xrevrange(stream, count=1)
