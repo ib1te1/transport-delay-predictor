@@ -112,6 +112,13 @@ services:
     build:
       context: .
       dockerfile: services/predictor/Dockerfile
+    environment:
+      <<: *backend-env
+      MODEL_DIR: /models/current
+    volumes:
+      - ./config:/config:ro
+      - ./data/dataset:/data:ro
+      - ./models:/models:ro
     ports:
       - "127.0.0.1:8003:8000"
     # Longer start_period than the rest: importing CatBoost is the slow

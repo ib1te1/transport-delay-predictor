@@ -24,6 +24,8 @@ data/*
 !data/fixtures/**
 models/*
 !models/.gitkeep
+# The current model artifact is committed: the system must start without training.
+!models/current/
 *.parquet
 *.csv
 !data/fixtures/**/*.csv
