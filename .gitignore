@@ -1,0 +1,34 @@
+# Editor local config
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Data & models (кроме фикстур)
+data/*
+!data/fixtures/
+!data/fixtures/**
+models/*
+!models/.gitkeep
+*.parquet
+*.csv
+!data/fixtures/**/*.csv
+
+# Env & local
+.env
+.env.local
+*.log
