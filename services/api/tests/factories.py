@@ -13,14 +13,22 @@ def at(seconds: float) -> datetime:
     return T0 + timedelta(seconds=seconds)
 
 
-def telemetry_record(tr_id: int | None, t: datetime, *, unit_id: int = 1) -> TelemetryRecord:
+def telemetry_record(
+    tr_id: int | None,
+    t: datetime,
+    *,
+    unit_id: int = 1,
+    lat: float | None = 55.75,
+    lon: float | None = 37.62,
+    location_valid: bool = True,
+) -> TelemetryRecord:
     return TelemetryRecord(
         tr_id=tr_id,
         unit_id=unit_id,
         event_time=t,
-        lat=55.75,
-        lon=37.62,
-        location_valid=True,
+        lat=lat,
+        lon=lon,
+        location_valid=location_valid,
         speed_kmh=20.0,
         heading_deg=90.0,
         source="replay",
@@ -37,9 +45,11 @@ def stop_event(tr_id: int, stop_id: int, time_plan: datetime, time_fact: datetim
     )
 
 
-def plan_stop(tr_id: int, stop_id: int, time_plan: datetime) -> PlanStop:
+def plan_stop(
+    tr_id: int, stop_id: int, time_plan: datetime, *, address: str | None = None
+) -> PlanStop:
     return PlanStop(
-        stop_id=stop_id, tr_id=tr_id, time_plan=time_plan, lat=55.75, lon=37.62, address=None
+        stop_id=stop_id, tr_id=tr_id, time_plan=time_plan, lat=55.75, lon=37.62, address=address
     )
 
 
