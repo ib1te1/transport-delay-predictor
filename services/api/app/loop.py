@@ -3,7 +3,12 @@
 Runs as one background task of the api process. Any failure short of
 cancellation — Redis or Postgres gone, a bug inside a tick — is logged,
 and the whole loop starts over after a doubling pause. Starting over
-rebuilds the state from the streams, so it loses nothing they still hold.
+rebuilds the state from the streams and the current predictions from the
+``predictions`` table, so it loses nothing they still hold.
+
+Each run also feeds the dashboard: it attaches its state to the
+process's ``Dashboard``, publishes every prediction row there, and
+refreshes the dashboard's view once a second.
 """
 
 import asyncio
@@ -16,12 +21,14 @@ from psycopg_pool import ConnectionPool
 from redis.asyncio import Redis
 
 from app.config import ApiConfig
+from app.dashboard import Dashboard
+from app.live import LiveState
 from app.models import PredictionRow
 from app.planner import PlanIndex
 from app.predictor_client import PredictorClient
 from app.scoring import run_tick
 from app.state import FleetState
-from app.store import load_plan, save_predictions
+from app.store import load_latest_predictions, load_plan, save_predictions
 from app.streams import feed_stop_events, feed_telemetry, recover_stop_events, recover_telemetry
 from common.bus import PREDICTIONS_STREAM, STOP_EVENTS_STREAM, TELEMETRY_STREAM, append_async
 
@@ -78,23 +85,37 @@ def _save(pool: ConnectionPool, rows: list[PredictionRow]) -> None:
         save_predictions(conn, rows)
 
 
+def _load_latest(pool: ConnectionPool, since: datetime) -> list[PredictionRow]:
+    with pool.connection() as conn:
+        return load_latest_predictions(conn, since)
+
+
 async def run_once(
     pool: ConnectionPool,
     redis: Redis,
     predictor: PredictorClient,
     config: ApiConfig,
     *,
+    dashboard: Dashboard,
     streams: StreamNames = DEFAULT_STREAMS,
 ) -> None:
-    """Load the plan, rebuild the state, then follow the streams and score until a failure."""
+    """Rebuild the state, then follow the streams, score and feed the dashboard until a failure."""
     plan = await asyncio.to_thread(_load_plan, pool)
     state = FleetState(timedelta(seconds=config.request.telemetry_window_sec))
     telemetry_id = await recover_telemetry(redis, state, stream=streams.telemetry)
     stop_events_id = await recover_stop_events(redis, state, stream=streams.stop_events)
+    live = LiveState(state, plan)
+    if state.clock is not None:
+        # Predictions that ended meanwhile are dropped by the first refresh.
+        for row in await asyncio.to_thread(_load_latest, pool, state.clock - state.window):
+            live.current.put(row)
+    dashboard.attach(live)
     log.info(
-        "prediction loop started: %d planned vehicles, %d vehicles in the window, clock %s",
+        "prediction loop started: %d planned vehicles, %d vehicles in the window, "
+        "%d current predictions, clock %s",
         len(plan),
         len(state.vehicles()),
+        len(live.current.vehicles()),
         state.clock,
     )
 
@@ -104,6 +125,7 @@ async def run_once(
     async def publish(rows: list[PredictionRow]) -> None:
         for row in rows:
             await append_async(redis, streams.predictions, row)
+        await dashboard.publish_predictions(rows)
 
     async def tick(t: datetime) -> None:
         await run_tick(
@@ -116,6 +138,7 @@ async def run_once(
             feed_stop_events(redis, state, stop_events_id, stream=streams.stop_events)
         )
         group.create_task(schedule_ticks(state, tick, timedelta(seconds=config.scoring_period_sec)))
+        group.create_task(dashboard.run())
 
 
 def _leaf_exceptions(exc: BaseExceptionGroup) -> list[BaseException]:
@@ -147,6 +170,7 @@ async def run_prediction_loop(
     predictor: PredictorClient,
     config: ApiConfig,
     *,
+    dashboard: Dashboard,
     streams: StreamNames = DEFAULT_STREAMS,
     initial_delay: float = 1.0,
     max_delay: float = 30.0,
@@ -160,7 +184,7 @@ async def run_prediction_loop(
         redis: Redis | None = None
         try:
             redis = Redis.from_url(redis_url)
-            await run_once(pool, redis, predictor, config, streams=streams)
+            await run_once(pool, redis, predictor, config, dashboard=dashboard, streams=streams)
         except Exception as exc:
             log.warning(
                 "prediction loop failed (%s: %s), restarting in %.1fs",

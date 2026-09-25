@@ -5,8 +5,10 @@ from typing import Any
 
 from fastapi import FastAPI, WebSocket
 from fastapi.openapi.utils import get_openapi
+from redis.asyncio import Redis
 
 from app.config import ApiConfig
+from app.dashboard import Dashboard
 from app.loop import run_prediction_loop
 from app.predictor_client import PredictorClient
 from app.schemas import ws_message_schemas
@@ -25,10 +27,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the API must come up even while it does not.
     pool = make_pool(settings.database_url)
     pool.open(wait=False)
+    # A client of its own: the loop's is replaced on every restart, while
+    # the dashboard's numbering and published view last as long as the process.
+    bus = Redis.from_url(settings.redis_url)
+    app.state.dashboard = Dashboard(bus, config)
     predictor = PredictorClient(settings.predictor_url, config.predict_timeout_ms / 1000)
     tasks = [
         asyncio.create_task(relay(settings.redis_url, DASHBOARD_CHANNEL, app.state.hub)),
-        asyncio.create_task(run_prediction_loop(pool, settings.redis_url, predictor, config)),
+        asyncio.create_task(
+            run_prediction_loop(
+                pool, settings.redis_url, predictor, config, dashboard=app.state.dashboard
+            )
+        ),
     ]
     try:
         yield
@@ -39,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             with suppress(asyncio.CancelledError):
                 await task
         await predictor.aclose()
+        await bus.aclose()
         await asyncio.to_thread(pool.close)
 
 

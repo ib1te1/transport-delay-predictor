@@ -8,14 +8,16 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from factories import at, plan_stop, stop_event, telemetry_record
+from factories import at, plan_stop, prediction_row, stop_event, telemetry_record
 from redis.asyncio import Redis
 
 import app.loop as loop_module
 from app.config import ApiConfig
+from app.dashboard import Dashboard
 from app.loop import StreamNames, run_prediction_loop, schedule_ticks
 from app.models import PredictionRow
 from app.predictor_client import PredictorClient
+from app.store import save_predictions
 from common.bus import append_async
 from common.db import connect, fetch_models, insert_models, make_pool
 
@@ -71,7 +73,9 @@ async def test_loop_restarts_after_a_failure_with_a_doubling_pause(
             raise Stop
 
     with pytest.raises(Stop):
-        await run_prediction_loop(None, "redis://unused:6379/0", None, ApiConfig(), sleep=sleep)
+        await run_prediction_loop(
+            None, "redis://unused:6379/0", None, ApiConfig(), dashboard=None, sleep=sleep
+        )
 
     assert delays == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0]
     assert attempts == 6
@@ -112,7 +116,9 @@ async def test_loop_retries_when_the_redis_client_cannot_be_created(
             raise Stop
 
     with pytest.raises(Stop):
-        await run_prediction_loop(None, "redis://unused:6379/0", None, ApiConfig(), sleep=sleep)
+        await run_prediction_loop(
+            None, "redis://unused:6379/0", None, ApiConfig(), dashboard=None, sleep=sleep
+        )
 
     # First iteration fails before run_once is ever called; it is retried
     # like any other failure instead of killing the supervisor.
@@ -139,7 +145,9 @@ async def test_loop_logs_the_leaf_exceptions_of_an_exception_group(
         raise Stop
 
     with caplog.at_level(logging.WARNING, logger="app.loop"), pytest.raises(Stop):
-        await run_prediction_loop(None, "redis://unused:6379/0", None, ApiConfig(), sleep=sleep)
+        await run_prediction_loop(
+            None, "redis://unused:6379/0", None, ApiConfig(), dashboard=None, sleep=sleep
+        )
 
     message = caplog.records[-1].getMessage()
     assert "bad telemetry record" in message
@@ -158,6 +166,20 @@ async def wait_for_rows(database_url: str, tr_id: int, count: int) -> list[Predi
         while len(rows := await asyncio.to_thread(fetch_rows, database_url, tr_id)) < count:
             await asyncio.sleep(0.1)
     return rows
+
+
+async def wait_for_shown_prediction(dashboard: Dashboard, tr_id: int, sample_id: str) -> None:
+    """Wait until the dashboard's published view shows ``sample_id`` for the vehicle."""
+
+    def shown() -> bool:
+        return any(
+            v.tr_id == tr_id and v.prediction is not None and v.prediction.sample_id == sample_id
+            for v in dashboard.snapshot().vehicles
+        )
+
+    async with asyncio.timeout(10):
+        while not shown():
+            await asyncio.sleep(0.1)
 
 
 @pytest.mark.anyio
@@ -192,6 +214,7 @@ async def test_loop_scores_recovered_and_live_telemetry(database_url: str, redis
 
     predictor = PredictorClient("http://predictor", 1.0, transport=httpx.MockTransport(model))
     redis = Redis.from_url(redis_url)
+    dashboard = Dashboard(redis, ApiConfig(), channel=f"test-{uuid4().hex}")
     with connect(database_url) as conn:
         insert_models(conn, "stops_plan", [target])
         conn.commit()
@@ -207,13 +230,16 @@ async def test_loop_scores_recovered_and_live_telemetry(database_url: str, redis
         )
         with make_pool(database_url) as pool:
             task = asyncio.create_task(
-                run_prediction_loop(pool, redis_url, predictor, ApiConfig(), streams=streams)
+                run_prediction_loop(
+                    pool, redis_url, predictor, ApiConfig(), dashboard=dashboard, streams=streams
+                )
             )
             try:
                 await wait_for_rows(database_url, tr_id, 1)
                 # Arrives while running: picked up by the live feed, next tick.
                 await append_async(redis, streams.telemetry, telemetry_record(tr_id, at(1860)))
                 rows = await wait_for_rows(database_url, tr_id, 2)
+                await wait_for_shown_prediction(dashboard, tr_id, rows[-1].sample_id)
             finally:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -234,3 +260,48 @@ async def test_loop_scores_recovered_and_live_telemetry(database_url: str, redis
     assert (first.risk_level, first.degraded, first.model_version) == ("red", False, "m1")
     assert len(batches[0][0]["telemetry"]) == 2
     assert [PredictionRow.model_validate_json(f[b"data"]) for _, f in published] == rows
+
+
+@pytest.mark.anyio
+@pytest.mark.timeout(60)
+async def test_loop_restores_current_predictions_from_the_table(
+    database_url: str, redis_url: str
+) -> None:
+    tr_id = 9_000_000_000 + random.randrange(1_000_000)
+    streams = StreamNames(
+        telemetry=f"test-{uuid4().hex}",
+        stop_events=f"test-{uuid4().hex}",
+        predictions=f"test-{uuid4().hex}",
+    )
+    stored = [
+        prediction_row(sample_id=f"{tr_id}_a", tr_id=tr_id, t=at(1500), target_stop_id=tr_id),
+        prediction_row(sample_id=f"{tr_id}_b", tr_id=tr_id, t=at(1700), target_stop_id=tr_id),
+    ]
+    # No predictor_url: nothing is planned for this vehicle, so no tick calls it.
+    predictor = PredictorClient(None, 1.0)
+    redis = Redis.from_url(redis_url)
+    dashboard = Dashboard(redis, ApiConfig(), channel=f"test-{uuid4().hex}")
+    with connect(database_url) as conn:
+        save_predictions(conn, stored)
+        conn.commit()
+    try:
+        await append_async(redis, streams.telemetry, telemetry_record(tr_id, at(0)))
+        await append_async(redis, streams.telemetry, telemetry_record(tr_id, at(1800)))
+        with make_pool(database_url) as pool:
+            task = asyncio.create_task(
+                run_prediction_loop(
+                    pool, redis_url, predictor, ApiConfig(), dashboard=dashboard, streams=streams
+                )
+            )
+            try:
+                await wait_for_shown_prediction(dashboard, tr_id, f"{tr_id}_b")
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+    finally:
+        await redis.delete(streams.telemetry, streams.stop_events, streams.predictions)
+        await redis.aclose()
+        with connect(database_url) as conn:
+            conn.execute("DELETE FROM predictions WHERE tr_id = %s", (tr_id,))
+            conn.commit()
