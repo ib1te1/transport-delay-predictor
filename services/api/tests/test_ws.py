@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+import app.main as main_module
 import app.ws as ws_module
 from app.main import app
 from app.ws import Hub, relay
@@ -115,10 +116,25 @@ async def test_relay_resets_backoff_after_a_delivered_message(
     assert socket.sent == [message.model_dump_json()]
 
 
+@pytest.fixture
+def no_prediction_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the background prediction loop with a no-op that waits for cancellation.
+
+    Without this, entering the lifespan runs the real loop against the
+    shared dev Redis and Postgres, scoring against the default streams
+    instead of the unique ones tests are supposed to use.
+    """
+
+    async def wait_until_cancelled(*args, **kwargs) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(main_module, "run_prediction_loop", wait_until_cancelled)
+
+
 # database_url is not used directly: TestClient(app) runs the lifespan,
 # which builds ServiceSettings, where database_url is required. Drop the
 # marker and the test fails on a validation error instead of skipping.
-@pytest.mark.usefixtures("database_url")
+@pytest.mark.usefixtures("database_url", "no_prediction_loop")
 @pytest.mark.timeout(30)
 def test_ws_delivers_bus_messages(redis_url: str) -> None:
     sent = BusMessage(type="test", data={"n": 1})
@@ -134,7 +150,7 @@ def test_ws_delivers_bus_messages(redis_url: str) -> None:
 
 # Same reason as above: database_url is unused here too, but TestClient(app)
 # still requires it through ServiceSettings at lifespan startup.
-@pytest.mark.usefixtures("database_url")
+@pytest.mark.usefixtures("database_url", "no_prediction_loop")
 @pytest.mark.timeout(30)
 def test_ws_discards_client_on_disconnect() -> None:
     with TestClient(app) as client:

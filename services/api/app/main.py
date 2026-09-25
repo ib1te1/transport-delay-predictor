@@ -4,22 +4,39 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, WebSocket
 
+from app.config import ApiConfig
+from app.loop import run_prediction_loop
+from app.predictor_client import PredictorClient
 from app.ws import Hub, relay
 from common.bus import DASHBOARD_CHANNEL
-from common.config import ServiceSettings
+from common.config import ServiceSettings, load_section
+from common.db import make_pool
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = ServiceSettings()
+    config = load_section(settings.config_path, "api", ApiConfig)
     app.state.hub = Hub()
-    task = asyncio.create_task(relay(settings.redis_url, DASHBOARD_CHANNEL, app.state.hub))
+    # Opened without waiting: the loop retries until Postgres answers, and
+    # the API must come up even while it does not.
+    pool = make_pool(settings.database_url)
+    pool.open(wait=False)
+    predictor = PredictorClient(settings.predictor_url, config.predict_timeout_ms / 1000)
+    tasks = [
+        asyncio.create_task(relay(settings.redis_url, DASHBOARD_CHANNEL, app.state.hub)),
+        asyncio.create_task(run_prediction_loop(pool, settings.redis_url, predictor, config)),
+    ]
     try:
         yield
     finally:
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with suppress(asyncio.CancelledError):
+                await task
+        await predictor.aclose()
+        await asyncio.to_thread(pool.close)
 
 
 app = FastAPI(title="api", lifespan=lifespan)
