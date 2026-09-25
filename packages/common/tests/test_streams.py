@@ -15,6 +15,7 @@ class Sample(BaseModel):
 
 
 @pytest.mark.anyio
+@pytest.mark.timeout(30)
 async def test_read_stream_yields_appended_models_and_skips_malformed(redis_url: str) -> None:
     stream = f"test-{uuid4().hex}"
     with Redis.from_url(redis_url) as redis:
@@ -38,6 +39,7 @@ async def test_read_stream_yields_appended_models_and_skips_malformed(redis_url:
 
 
 @pytest.mark.anyio
+@pytest.mark.timeout(30)
 async def test_read_stream_from_now_skips_history(redis_url: str) -> None:
     stream = f"test-{uuid4().hex}"
     with Redis.from_url(redis_url) as redis:
@@ -60,6 +62,7 @@ async def test_read_stream_from_now_skips_history(redis_url: str) -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.timeout(30)
 async def test_append_async_is_readable_like_append(redis_url: str) -> None:
     stream = f"test-{uuid4().hex}"
     client = AsyncRedis.from_url(redis_url)
