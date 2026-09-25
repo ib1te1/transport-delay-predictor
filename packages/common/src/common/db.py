@@ -68,13 +68,10 @@ def insert_models(
 ) -> None:
     """Insert models as rows; columns are the model's fields.
 
-    A field with no matching column fails the insert at once. ``dict``
-    values go in as JSONB. ``on_conflict`` is appended verbatim, e.g.
+    A field with no matching column fails the insert at once. ``dict`` and
+    ``list`` values are sent as JSONB; Postgres array columns are not
+    supported by this helper. ``on_conflict`` is appended verbatim, e.g.
     ``"ON CONFLICT (id) DO NOTHING"``. Does not commit.
-
-    A list-valued JSONB field (``list[dict]``) is sent as a Postgres array,
-    not JSONB, and fails on the elements; pass it already wrapped in
-    ``Jsonb(...)`` instead.
     """
     if not models:
         return
@@ -106,7 +103,7 @@ def _row(model: BaseModel, columns: list[str]) -> list[Any]:
 
 def _adapt(model: BaseModel, name: str, value: Any) -> Any:
     _reject_naive(value, f"{type(model).__name__}.{name}")
-    if isinstance(value, dict):
+    if isinstance(value, (dict, list)):
         return Jsonb(to_jsonable_python(value))
     return value
 

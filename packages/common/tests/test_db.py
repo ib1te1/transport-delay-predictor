@@ -33,6 +33,20 @@ class ReadingWithSource(Reading):
     source: str = "sensor"
 
 
+TAGGED_DDL = """
+CREATE TABLE tagged (
+    id integer PRIMARY KEY,
+    tags jsonb NOT NULL
+)
+"""
+SELECT_TAGGED = "SELECT id, tags FROM tagged ORDER BY id"
+
+
+class Tagged(BaseModel):
+    id: int
+    tags: list[str]
+
+
 @pytest.fixture
 def conn(db_conn: psycopg.Connection) -> psycopg.Connection:
     db_conn.execute(READING_DDL)
@@ -80,6 +94,19 @@ def test_dict_fields_are_stored_as_jsonb(conn: psycopg.Connection) -> None:
     assert conn.execute("SELECT jsonb_typeof(payload) FROM reading").fetchone() == ("object",)
     [row] = fetch_models(conn, Reading, SELECT_READINGS)
     assert row.payload == {"stops": [1, 2], "meta": {"at": "2026-09-22T00:00:00Z"}}
+
+
+def test_list_fields_are_stored_as_jsonb(conn: psycopg.Connection) -> None:
+    conn.execute(TAGGED_DDL)
+    rows = [Tagged(id=1, tags=["a", "b"]), Tagged(id=2, tags=[])]
+
+    insert_models(conn, "tagged", rows)
+
+    assert conn.execute("SELECT jsonb_typeof(tags) FROM tagged ORDER BY id").fetchall() == [
+        ("array",),
+        ("array",),
+    ]
+    assert fetch_models(conn, Tagged, SELECT_TAGGED) == rows
 
 
 def test_naive_datetime_is_rejected(conn: psycopg.Connection) -> None:
