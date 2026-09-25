@@ -23,8 +23,7 @@ class RiskConfig(StrictModel):
             raise ValueError(f"risk.green must be ordered (low, high), got ({low}, {high})")
         if self.red_above < high:
             raise ValueError(
-                f"risk.red_above ({self.red_above}) must be >= risk.green's upper "
-                f"bound ({high})"
+                f"risk.red_above ({self.red_above}) must be >= risk.green's upper bound ({high})"
             )
         return self
 
