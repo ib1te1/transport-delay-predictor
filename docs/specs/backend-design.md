@@ -168,7 +168,7 @@ alerts
   lead_time_s          double precision NULL
   unique (tr_id, target_stop_id) where status = 'open'
 
-vehicles      tr_id bigint PK, unit_id bigint unique
+vehicles      unit_id bigint PK, tr_id bigint, index (tr_id)
 stops_plan    stop_id bigint PK, tr_id bigint, time_plan timestamptz,
               lat double precision, lon double precision, address text
               index (tr_id, time_plan)
