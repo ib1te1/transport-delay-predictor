@@ -6,9 +6,12 @@ whole state is small — tens of vehicles, a few hundred points each.
 """
 
 import bisect
+import logging
 from datetime import datetime, timedelta
 
 from contracts import StopEvent, TelemetryRecord
+
+log = logging.getLogger(__name__)
 
 
 def _event_time(record: TelemetryRecord) -> datetime:
@@ -40,8 +43,18 @@ class FleetState:
         A record without ``tr_id`` still moves the clock: the clock is the
         dataset's time, not a vehicle's. Points arrive mostly in order; one
         that does not is inserted in its place.
+
+        Rejecting or clamping a record that jumps the clock far ahead is a
+        spec decision not made here; such a jump is only logged.
         """
         t = record.event_time
+        if self.clock is not None and t > self.clock and t - self.clock > self._window:
+            log.warning(
+                "telemetry from unit %s advanced the clock by more than the window: %s -> %s",
+                record.unit_id,
+                self.clock,
+                t,
+            )
         if self.clock is None or t > self.clock:
             self.clock = t
         if self.observed_since is None or t < self.observed_since:

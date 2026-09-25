@@ -1,5 +1,7 @@
+import logging
 from datetime import timedelta
 
+import pytest
 from factories import at, stop_event, telemetry_record
 
 from app.state import FleetState
@@ -86,3 +88,26 @@ def test_pruning_does_not_restart_the_warm_up() -> None:
 
     assert not state.warming_up(at(3000))
     assert state.window == WINDOW
+
+
+def test_a_clock_jump_past_the_window_logs_a_warning(caplog: pytest.LogCaptureFixture) -> None:
+    state = FleetState(WINDOW)
+    state.add_telemetry(telemetry_record(7, at(0), unit_id=99))
+
+    with caplog.at_level(logging.WARNING, logger="app.state"):
+        state.add_telemetry(telemetry_record(7, at(5000), unit_id=99))
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "99" in message
+    assert state.clock == at(5000)
+
+
+def test_a_normal_step_does_not_log(caplog: pytest.LogCaptureFixture) -> None:
+    state = FleetState(WINDOW)
+    state.add_telemetry(telemetry_record(7, at(0)))
+
+    with caplog.at_level(logging.WARNING, logger="app.state"):
+        state.add_telemetry(telemetry_record(7, at(30)))
+
+    assert caplog.records == []

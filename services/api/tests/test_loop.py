@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import random
 from contextlib import suppress
 from datetime import datetime, timedelta
@@ -74,6 +75,75 @@ async def test_loop_restarts_after_a_failure_with_a_doubling_pause(
 
     assert delays == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0]
     assert attempts == 6
+
+
+@pytest.mark.anyio
+async def test_loop_retries_when_the_redis_client_cannot_be_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeRedis:
+        async def aclose(self) -> None:
+            pass
+
+    creation_attempts = 0
+
+    def failing_from_url(url: str) -> FakeRedis:
+        nonlocal creation_attempts
+        creation_attempts += 1
+        if creation_attempts == 1:
+            raise ValueError("malformed redis_url")
+        return FakeRedis()
+
+    monkeypatch.setattr(loop_module.Redis, "from_url", failing_from_url)
+
+    run_once_calls = 0
+
+    async def failing_run_once(*args, **kwargs) -> None:
+        nonlocal run_once_calls
+        run_once_calls += 1
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(loop_module, "run_once", failing_run_once)
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) == 3:
+            raise Stop
+
+    with pytest.raises(Stop):
+        await run_prediction_loop(None, "redis://unused:6379/0", None, ApiConfig(), sleep=sleep)
+
+    # First iteration fails before run_once is ever called; it is retried
+    # like any other failure instead of killing the supervisor.
+    assert creation_attempts == 3
+    assert run_once_calls == 2
+    assert delays == [1.0, 2.0, 4.0]
+
+
+@pytest.mark.anyio
+async def test_loop_logs_the_leaf_exceptions_of_an_exception_group(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def failing(*args, **kwargs) -> None:
+        raise ExceptionGroup(
+            "unhandled errors in a TaskGroup",
+            [ValueError("bad telemetry record"), RuntimeError("stop_events feed died")],
+        )
+
+    monkeypatch.setattr(loop_module, "run_once", failing)
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        raise Stop
+
+    with caplog.at_level(logging.WARNING, logger="app.loop"), pytest.raises(Stop):
+        await run_prediction_loop(None, "redis://unused:6379/0", None, ApiConfig(), sleep=sleep)
+
+    message = caplog.records[-1].getMessage()
+    assert "bad telemetry record" in message
+    assert "stop_events feed died" in message
 
 
 def fetch_rows(database_url: str, tr_id: int) -> list[PredictionRow]:

@@ -118,6 +118,29 @@ async def run_once(
         group.create_task(schedule_ticks(state, tick, timedelta(seconds=config.scoring_period_sec)))
 
 
+def _leaf_exceptions(exc: BaseExceptionGroup) -> list[BaseException]:
+    """The non-group exceptions nested anywhere inside ``exc``, depth-first."""
+    leaves: list[BaseException] = []
+    for sub in exc.exceptions:
+        if isinstance(sub, BaseExceptionGroup):
+            leaves.extend(_leaf_exceptions(sub))
+        else:
+            leaves.append(sub)
+    return leaves
+
+
+def _failure_detail(exc: BaseException) -> str:
+    """A loggable description of ``exc``; an ``ExceptionGroup`` expands to its leaves.
+
+    The default ``str()`` of an ``ExceptionGroup`` raised out of a
+    ``TaskGroup`` is just "unhandled errors in a TaskGroup" — the actual
+    causes are nested inside and otherwise show up only in the traceback.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        return "; ".join(repr(leaf) for leaf in _leaf_exceptions(exc))
+    return str(exc)
+
+
 async def run_prediction_loop(
     pool: ConnectionPool,
     redis_url: str,
@@ -134,19 +157,21 @@ async def run_prediction_loop(
     delay = initial_delay
     while True:
         started = loop.time()
-        redis = Redis.from_url(redis_url)
+        redis: Redis | None = None
         try:
+            redis = Redis.from_url(redis_url)
             await run_once(pool, redis, predictor, config, streams=streams)
         except Exception as exc:
             log.warning(
                 "prediction loop failed (%s: %s), restarting in %.1fs",
                 type(exc).__name__,
-                exc,
+                _failure_detail(exc),
                 delay,
                 exc_info=True,
             )
         finally:
-            await redis.aclose()
+            if redis is not None:
+                await redis.aclose()
         if loop.time() - started > max_delay:
             delay = initial_delay
         await sleep(delay)
