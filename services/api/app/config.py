@@ -37,6 +37,16 @@ class ApiConfig(StrictModel):
     request: RequestConfig = RequestConfig()
     risk: RiskConfig = RiskConfig()
 
+    @model_validator(mode="after")
+    def _check_time_limits_are_ordered(self) -> "ApiConfig":
+        window = self.request.telemetry_window_sec
+        if not self.stale_after_sec <= self.drop_after_sec <= window:
+            raise ValueError(
+                "expected stale_after_sec <= drop_after_sec <= request.telemetry_window_sec, "
+                f"got {self.stale_after_sec}, {self.drop_after_sec}, {window}"
+            )
+        return self
+
 
 class SeedConfig(StrictModel):
     period: Literal["train", "test", "validate"] = "test"

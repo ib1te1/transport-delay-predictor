@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.config import ApiConfig, RiskConfig, SeedConfig
+from app.config import ApiConfig, RequestConfig, RiskConfig, SeedConfig
 from common.config import REPO_ROOT, load_dataset_config, load_section
 
 SYSTEM_YAML = REPO_ROOT / "config" / "system.yaml"
@@ -29,3 +29,22 @@ def test_risk_config_rejects_a_swapped_green_pair():
 def test_risk_config_rejects_red_above_below_green():
     with pytest.raises(ValidationError, match="red_above"):
         RiskConfig(green=(-60.0, 120.0), red_above=100.0)
+
+
+def test_api_config_rejects_stale_after_longer_than_drop_after():
+    with pytest.raises(ValidationError, match="got 1000, 900, 1800"):
+        ApiConfig(stale_after_sec=1000, drop_after_sec=900)
+
+
+def test_api_config_rejects_drop_after_longer_than_the_telemetry_window():
+    with pytest.raises(ValidationError, match="got 120, 2000, 1800"):
+        ApiConfig(drop_after_sec=2000)
+
+
+def test_api_config_accepts_equal_time_limits():
+    config = ApiConfig(
+        stale_after_sec=900,
+        drop_after_sec=900,
+        request=RequestConfig(telemetry_window_sec=900),
+    )
+    assert config.drop_after_sec == 900
