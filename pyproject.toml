@@ -1,0 +1,24 @@
+# Tooling configuration only. Each service under services/ is a separate
+# image with its own requirements.txt; nothing is installed from here.
+#
+# There is deliberately no [tool.pytest.ini_options] table: every service
+# ships a package named "app", so a single collection run from the
+# repository root would bind "app" to whichever service was imported
+# first. Tests are run from inside a service directory instead, and CI
+# does that as a matrix.
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+# E/F/W — pycodestyle and pyflakes, I — import order, UP — syntax that
+# 3.13 makes available, B — bugbear. Deliberately not more: a linter that
+# argues with five people under time pressure gets switched off.
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+# Service packages sit at services/<name>/app and the shared ones under
+# packages/*/src, not at the root, so ruff would otherwise sort them in
+# with the third-party imports.
+known-first-party = ["app", "common", "contracts"]

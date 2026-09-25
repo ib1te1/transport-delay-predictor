@@ -1,0 +1,19 @@
+# Tooling shared by every track: the linter and the test runner CI runs,
+# plus the HTTP client starlette's TestClient drives.
+#
+# httpx2, not httpx: starlette 1.6 deprecates the older client under
+# TestClient and warns on every run. The runtime client in
+# services/api/requirements.txt is still httpx — that one belongs to the
+# backend track, and nothing calls it yet.
+#
+# anyio backs the @pytest.mark.anyio async tests (e.g. packages/common's
+# bus tests). Pinned directly rather than left to arrive transitively via
+# httpx2/starlette: a change to either pin must not silently break it.
+#
+# pytest-timeout bounds tests that can block forever instead of failing,
+# such as a WebSocket round trip whose message never arrives.
+pytest==9.1.1
+ruff==0.16.8
+httpx2==2.13.0
+anyio==4.15.1
+pytest-timeout==2.4.0

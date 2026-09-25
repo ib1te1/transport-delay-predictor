@@ -1,0 +1,101 @@
+from pathlib import Path
+
+import pytest
+from pydantic import BaseModel, ValidationError
+
+from common.config import REPO_ROOT, ConfigError, ServiceSettings, StrictModel, load_yaml
+
+
+class Matcher(StrictModel):
+    stop_radius_m: int
+    stopped_speed_kmh: float
+
+
+class Toy(StrictModel):
+    name: str
+    matcher: Matcher
+
+
+def write(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "toy.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_valid_file_loads(tmp_path: Path) -> None:
+    path = write(tmp_path, "name: toy\nmatcher:\n  stop_radius_m: 50\n  stopped_speed_kmh: 5\n")
+
+    assert load_yaml(path, Toy) == Toy(
+        name="toy", matcher=Matcher(stop_radius_m=50, stopped_speed_kmh=5)
+    )
+
+
+def test_unknown_key_fails_with_its_path(tmp_path: Path) -> None:
+    path = write(
+        tmp_path,
+        "name: toy\nmatcher:\n  stop_radius_m: 50\n  stopped_speed_kmh: 5\n  stop_raduis_m: 60\n",
+    )
+
+    with pytest.raises(ConfigError, match=r"matcher\.stop_raduis_m"):
+        load_yaml(path, Toy)
+
+
+def test_wrong_type_fails_with_its_path(tmp_path: Path) -> None:
+    path = write(tmp_path, "name: toy\nmatcher:\n  stop_radius_m: far\n  stopped_speed_kmh: 5\n")
+
+    with pytest.raises(ConfigError, match=r"matcher\.stop_radius_m") as caught:
+        load_yaml(path, Toy)
+    assert str(path) in str(caught.value)
+
+
+def test_missing_file_is_a_config_error(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError):
+        load_yaml(tmp_path / "absent.yaml", Toy)
+
+
+def test_model_that_allows_extra_keys_is_refused(tmp_path: Path) -> None:
+    class Loose(BaseModel):
+        name: str
+
+    with pytest.raises(TypeError, match="StrictModel"):
+        load_yaml(write(tmp_path, "name: x\n"), Loose)
+
+
+def test_settings_read_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://db")
+    monkeypatch.setenv("REDIS_URL", "redis://bus")
+    monkeypatch.delenv("PREDICTOR_URL", raising=False)
+    monkeypatch.delenv("CONFIG_PATH", raising=False)
+
+    settings = ServiceSettings(_env_file=None)
+
+    assert settings.database_url == "postgresql://db"
+    assert settings.redis_url == "redis://bus"
+    assert settings.predictor_url is None
+    assert settings.config_path == REPO_ROOT / "config" / "system.yaml"
+
+
+def test_missing_required_variable_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("REDIS_URL", "redis://bus")
+
+    with pytest.raises(ValidationError, match="database_url"):
+        ServiceSettings(_env_file=None)
+
+
+def test_config_path_can_be_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://db")
+    monkeypatch.setenv("REDIS_URL", "redis://bus")
+    monkeypatch.setenv("CONFIG_PATH", "/config/system.yaml")
+
+    assert ServiceSettings(_env_file=None).config_path == Path("/config/system.yaml")
+
+
+def test_service_settings_defaults_point_into_the_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x")
+    monkeypatch.setenv("REDIS_URL", "redis://x")
+    settings = ServiceSettings(_env_file=None)
+    assert settings.config_path == REPO_ROOT / "config" / "system.yaml"
+    assert settings.data_dir == REPO_ROOT / "data" / "dataset"

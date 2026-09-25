@@ -1,0 +1,7 @@
+# node_modules must never reach the image: COPY would overwrite what
+# npm ci installed for linux with a tree built for the host platform,
+# and esbuild and rollup ship platform-specific binaries.
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo

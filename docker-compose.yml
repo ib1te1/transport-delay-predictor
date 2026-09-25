@@ -1,0 +1,135 @@
+# Environment shared by the four Python services. Inside compose they
+# reach each other by name; only what is published to the host changes.
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://${POSTGRES_USER:-delay_predictor}:${POSTGRES_PASSWORD:-delay_predictor}@postgres:5432/${POSTGRES_DB:-delay_predictor}
+  REDIS_URL: redis://redis:6379/0
+  CONFIG_PATH: /config/system.yaml
+  DATA_DIR: /data
+
+x-backend-healthcheck: &backend-healthcheck
+  test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+  interval: 10s
+  timeout: 3s
+  retries: 5
+  start_period: 15s
+
+x-backend: &backend
+  environment: *backend-env
+  volumes:
+    # Read-only and outside the image: editing system.yaml needs a
+    # restart, not a rebuild. The dataset is mounted, never baked in.
+    - ./config:/config:ro
+    - ./data/dataset:/data:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  healthcheck: *backend-healthcheck
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-delay_predictor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-delay_predictor}
+      POSTGRES_DB: ${POSTGRES_DB:-delay_predictor}
+    # Never beyond localhost, on the stand included. The host port is
+    # configurable because a local Postgres on 5432 is common.
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-delay_predictor}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Tag pinned to the 7.2 branch on purpose: it is the last one released
+  # under BSD-3-Clause. The floating "7" tag resolves to 7.4+, which is
+  # dual RSALv2/SSPLv1. See docs/third-party.md — the declared license
+  # must match the tag that actually runs.
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Applies migrations and exits. Everything that touches the database
+  # waits for it, so migrations never run twice at once.
+  migrate:
+    build: ./migrations
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-delay_predictor}:${POSTGRES_PASSWORD:-delay_predictor}@postgres:5432/${POSTGRES_DB:-delay_predictor}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # The NDTP listener port is added here by the ingest track.
+  ingest:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: services/ingest/Dockerfile
+    # Debug access only, always local.
+    ports:
+      - "127.0.0.1:8001:8000"
+
+  matcher:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: services/matcher/Dockerfile
+    ports:
+      - "127.0.0.1:8002:8000"
+
+  predictor:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: services/predictor/Dockerfile
+    ports:
+      - "127.0.0.1:8003:8000"
+    # Longer start_period than the rest: importing CatBoost is the slow
+    # part of this service's startup.
+    healthcheck:
+      <<: *backend-healthcheck
+      start_period: 40s
+
+  # Does not wait for predictor: the dashboard has to work without a
+  # model, and a predictor that fails at startup must not keep the API
+  # down.
+  api:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      <<: *backend-env
+      PREDICTOR_URL: http://predictor:8000
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:8000:8000"
+
+  # VITE_API_URL is read by the browser, not by this container, so it is
+  # the address the viewer's machine reaches api at. The Vite dev server
+  # needs nothing from api to start, hence service_started.
+  web:
+    build: ./web
+    environment:
+      VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:5173:5173"
+
+volumes:
+  pgdata:

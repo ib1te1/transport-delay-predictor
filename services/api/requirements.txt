@@ -1,0 +1,12 @@
+# Exact pins, resolved inside python:3.13-slim. Loose bounds would give
+# five people five dependency trees, and the difference would surface on
+# the first joint build.
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+psycopg[binary]==3.3.6
+redis==8.1.0
+psycopg-pool==3.3.2
+pydantic-settings==2.15.0
+pyyaml==6.0.3
+httpx==0.28.1
