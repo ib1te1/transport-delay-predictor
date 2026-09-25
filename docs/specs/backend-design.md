@@ -210,7 +210,6 @@ api:
   stale_after_sec: 120
   drop_after_sec: 900
   predict_timeout_ms: 1000
-  predictor_url: http://predictor:8000
   card_track_sec: 1800
   request:
     telemetry_window_sec: 1800
@@ -221,6 +220,7 @@ api:
 
 seed:
   period: test
+  source_timezone: UTC
 ```
 
 ## 12. Тесты

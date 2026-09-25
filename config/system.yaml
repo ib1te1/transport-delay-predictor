@@ -1,0 +1,34 @@
+# Runtime settings, one top-level section per service. Each service reads
+# only its own section and rejects unknown keys in it. A value that changes
+# behaviour lives here, not in code.
+
+api:
+  # Prediction tick, in dataset time.
+  scoring_period_sec: 60
+  # A vehicle silent longer than this is predicted from its last state and
+  # flagged degraded; longer than drop_after_sec it leaves the cycle.
+  stale_after_sec: 120
+  drop_after_sec: 900
+  predict_timeout_ms: 1000
+  # Track length shown in the vehicle card.
+  card_track_sec: 1800
+  request:
+    telemetry_window_sec: 1800
+    schedule_back_sec: 3600
+  # Predicted delay, seconds. Inside green: on schedule. Above red_above:
+  # red. Everything else, including early by more than green's lower
+  # bound, is yellow. Defaults follow the organizers' early/late classes.
+  risk:
+    green: [-60, 120]
+    red_above: 300
+
+seed:
+  # Dataset part loaded as the demo period: train | test | validate.
+  period: test
+  # Dataset timestamps carry no zone; they are read in this one.
+  source_timezone: UTC
+
+ingest: {}
+matcher: {}
+predictor: {}
+replay: {}

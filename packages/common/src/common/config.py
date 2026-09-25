@@ -30,6 +30,31 @@ class ConfigError(ValueError):
     """A config file that is missing, malformed or fails validation."""
 
 
+def _read_yaml(path: Path) -> dict:
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ConfigError(f"{path}: {exc}") from exc
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path}: top level must be a mapping")
+    return raw
+
+
+def _validate[M: BaseModel](path: Path, raw: object, model: type[M], prefix: str = "") -> M:
+    if model.model_config.get("extra") != "forbid":
+        raise TypeError(f"{model.__name__} must forbid extra keys: derive it from StrictModel")
+    try:
+        return model.model_validate(raw if raw is not None else {})
+    except ValidationError as exc:
+        details = "\n".join(
+            f"  {prefix}{'.'.join(map(str, error['loc'])) or '<root>'}: {error['msg']}"
+            for error in exc.errors()
+        )
+        raise ConfigError(f"{path}: invalid config\n{details}") from exc
+
+
 def load_yaml[M: BaseModel](path: Path | str, model: type[M]) -> M:
     """Parse a YAML file and validate it; errors name the file and field path.
 
@@ -37,20 +62,21 @@ def load_yaml[M: BaseModel](path: Path | str, model: type[M]) -> M:
     inside them is silently ignored.
     """
     path = Path(path)
-    if model.model_config.get("extra") != "forbid":
-        raise TypeError(f"{model.__name__} must forbid extra keys: derive it from StrictModel")
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise ConfigError(f"{path}: {exc}") from exc
-    try:
-        return model.model_validate(raw if raw is not None else {})
-    except ValidationError as exc:
-        details = "\n".join(
-            f"  {'.'.join(map(str, error['loc'])) or '<root>'}: {error['msg']}"
-            for error in exc.errors()
-        )
-        raise ConfigError(f"{path}: invalid config\n{details}") from exc
+    return _validate(path, _read_yaml(path), model)
+
+
+def load_section[M: BaseModel](path: Path | str, section: str, model: type[M]) -> M:
+    """Validate one top-level section of a shared config file.
+
+    Each service reads only its own section, so a track can add keys to
+    its section without every other service learning about them. A
+    missing section is an error: it is more likely a typo than an intent.
+    """
+    path = Path(path)
+    raw = _read_yaml(path)
+    if section not in raw:
+        raise ConfigError(f"{path}: no section {section!r}")
+    return _validate(path, raw[section], model, prefix=f"{section}.")
 
 
 class ServiceSettings(BaseSettings):

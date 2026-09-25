@@ -3,7 +3,14 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from common.config import REPO_ROOT, ConfigError, ServiceSettings, StrictModel, load_yaml
+from common.config import (
+    REPO_ROOT,
+    ConfigError,
+    ServiceSettings,
+    StrictModel,
+    load_section,
+    load_yaml,
+)
 
 
 class Matcher(StrictModel):
@@ -99,3 +106,34 @@ def test_service_settings_defaults_point_into_the_repository(
     settings = ServiceSettings(_env_file=None)
     assert settings.config_path == REPO_ROOT / "config" / "system.yaml"
     assert settings.data_dir == REPO_ROOT / "data" / "dataset"
+    assert settings.config_path.is_file()
+
+
+class _Section(StrictModel):
+    size: int = 1
+
+
+def test_load_section_reads_only_its_section(tmp_path):
+    path = tmp_path / "system.yaml"
+    path.write_text("mine:\n  size: 3\nother:\n  anything: [1, 2]\n", encoding="utf-8")
+    assert load_section(path, "mine", _Section).size == 3
+
+
+def test_load_section_empty_section_uses_defaults(tmp_path):
+    path = tmp_path / "system.yaml"
+    path.write_text("mine: {}\n", encoding="utf-8")
+    assert load_section(path, "mine", _Section).size == 1
+
+
+def test_load_section_missing_section_is_an_error(tmp_path):
+    path = tmp_path / "system.yaml"
+    path.write_text("other: {}\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="no section 'mine'"):
+        load_section(path, "mine", _Section)
+
+
+def test_load_section_typo_names_the_field(tmp_path):
+    path = tmp_path / "system.yaml"
+    path.write_text("mine:\n  sise: 3\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="mine.sise"):
+        load_section(path, "mine", _Section)
