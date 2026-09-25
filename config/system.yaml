@@ -31,7 +31,23 @@ seed:
   # Dataset part loaded as the demo period: train | test | validate.
   period: test
 
-ingest: {}
+ingest:
+  # CSV replay and NDTP emulator are separate demo modes. They must not
+  # advance the same dataset clock at the same time.
+  mode: replay
+  ndtp:
+    host: 0.0.0.0
+    port: 9201
+    read_timeout_sec: 10
+    max_frame_bytes: 65535
+    # Required in emulator mode: its first packet maps to this dataset time.
+    dataset_anchor: null
 matcher: {}
 predictor: {}
-replay: {}
+replay:
+  # Must match seed.period so telemetry and planned stops share a period.
+  period: test
+  speedup: 60
+  start_at: null
+  end_at: null
+  sort_chunk_rows: 20000
