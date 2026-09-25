@@ -40,4 +40,3 @@ class ApiConfig(StrictModel):
 
 class SeedConfig(StrictModel):
     period: Literal["train", "test", "validate"] = "test"
-    source_timezone: str = "UTC"
