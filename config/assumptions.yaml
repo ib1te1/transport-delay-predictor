@@ -1,0 +1,9 @@
+# Dataset-dependent detector thresholds. A change after processing telemetry
+# requires a fresh replay because checkpoints include these values.
+matcher:
+  stop_radius_m: 50
+  stopped_speed_kmh: 5
+  visit_time_tolerance_sec: 300
+  stale_after_sec: 300
+  horizon_min_sec: 600
+  horizon_max_sec: 900

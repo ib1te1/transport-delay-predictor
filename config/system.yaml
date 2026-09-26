@@ -42,7 +42,8 @@ ingest:
     max_frame_bytes: 65535
     # Required in emulator mode: its first packet maps to this dataset time.
     dataset_anchor: null
-matcher: {}
+matcher:
+  poll_interval_sec: 0.25
 predictor: {}
 replay:
   # Must match seed.period so telemetry and planned stops share a period.
