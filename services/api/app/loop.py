@@ -80,9 +80,9 @@ def _load_plan(pool: ConnectionPool) -> PlanIndex:
         return load_plan(conn)
 
 
-def _save(pool: ConnectionPool, rows: list[PredictionRow]) -> None:
+def _save(pool: ConnectionPool, rows: list[PredictionRow]) -> list[PredictionRow]:
     with pool.connection() as conn:
-        save_predictions(conn, rows)
+        return save_predictions(conn, rows)
 
 
 def _load_latest(pool: ConnectionPool, since: datetime) -> list[PredictionRow]:
@@ -119,8 +119,8 @@ async def run_once(
         state.clock,
     )
 
-    async def save(rows: list[PredictionRow]) -> None:
-        await asyncio.to_thread(_save, pool, rows)
+    async def save(rows: list[PredictionRow]) -> list[PredictionRow]:
+        return await asyncio.to_thread(_save, pool, rows)
 
     async def publish(rows: list[PredictionRow]) -> None:
         for row in rows:

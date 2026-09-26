@@ -27,13 +27,24 @@ def load_plan(conn: psycopg.Connection) -> PlanIndex:
     return plan
 
 
-def save_predictions(conn: psycopg.Connection, rows: list[PredictionRow]) -> None:
-    """Insert prediction rows; does not commit.
+def save_predictions(conn: psycopg.Connection, rows: list[PredictionRow]) -> list[PredictionRow]:
+    """Insert prediction rows that are not already stored; does not commit.
 
     A ``sample_id`` already stored keeps its first row: a tick repeated
-    after a restart must not rewrite a prediction already shown.
+    after a restart must not rewrite a prediction already shown. Returns
+    the rows that were actually inserted, in input order, so a caller
+    knows which ones are new.
     """
+    if not rows:
+        return []
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT sample_id FROM predictions WHERE sample_id = ANY(%s)",
+            ([row.sample_id for row in rows],),
+        )
+        already_stored = {sample_id for (sample_id,) in cur.fetchall()}
     insert_models(conn, "predictions", rows, on_conflict="ON CONFLICT (sample_id) DO NOTHING")
+    return [row for row in rows if row.sample_id not in already_stored]
 
 
 def load_latest_predictions(conn: psycopg.Connection, since: datetime) -> list[PredictionRow]:

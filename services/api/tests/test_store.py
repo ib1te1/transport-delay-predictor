@@ -39,8 +39,20 @@ def test_save_predictions_keeps_the_first_row_for_a_sample(db_conn) -> None:
     assert stored == [first]
 
 
+def test_save_predictions_returns_only_the_rows_actually_inserted(db_conn) -> None:
+    stored = prediction_row(sample_id="store-test-2", prediction_s=10.0)
+    save_predictions(db_conn, [stored])
+
+    repeat = stored.model_copy(update={"prediction_s": 99.0})
+    fresh = prediction_row(sample_id="store-test-3", prediction_s=20.0)
+
+    saved = save_predictions(db_conn, [repeat, fresh])
+
+    assert saved == [fresh]
+
+
 def test_save_predictions_with_no_rows_is_a_no_op(db_conn) -> None:
-    save_predictions(db_conn, [])
+    assert save_predictions(db_conn, []) == []
 
 
 def test_load_latest_predictions_takes_the_newest_per_vehicle_within_the_window(db_conn) -> None:
