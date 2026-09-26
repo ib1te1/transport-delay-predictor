@@ -17,8 +17,6 @@ class MatcherAssumptions(StrictModel):
     stopped_speed_kmh: float = Field(gt=0)
     visit_time_tolerance_sec: float = Field(gt=0)
     stale_after_sec: float = Field(gt=0)
-    horizon_min_sec: float = Field(gt=0)
-    horizon_max_sec: float = Field(gt=0)
 
     def detector_settings(self) -> Settings:
         return Settings(**self.model_dump())

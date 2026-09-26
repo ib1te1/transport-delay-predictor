@@ -21,7 +21,7 @@ from common.config import ServiceSettings
 from contracts import StopEvent
 
 NOW = datetime(2026, 1, 6, 12, tzinfo=UTC)
-SETTINGS = Settings(50, 5, 300, 300, 600, 900)
+SETTINGS = Settings(50, 5, 300, 300)
 
 
 def infrastructure_url(name: str) -> str:

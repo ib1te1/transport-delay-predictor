@@ -15,15 +15,11 @@ class Settings:
     stopped_speed_kmh: float
     visit_time_tolerance_sec: float
     stale_after_sec: float
-    horizon_min_sec: float
-    horizon_max_sec: float
 
     def __post_init__(self):
         values = asdict(self)
         if any(not math.isfinite(v) or v <= 0 for v in values.values()):
             raise ValueError("Matcher thresholds must be finite and positive")
-        if self.horizon_min_sec >= self.horizon_max_sec:
-            raise ValueError("Invalid target horizon interval")
 
 
 def distance_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:

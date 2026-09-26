@@ -6,7 +6,7 @@ from app.dataset import Tick, Visit
 from app.matching import Settings, StopDetector
 
 NOW = datetime(2026, 1, 6, 12)
-SETTINGS = Settings(50, 5, 1800, 300, 600, 900)
+SETTINGS = Settings(50, 5, 1800, 300)
 
 
 def visit(visit_id="stop", at=NOW, vehicle="bus"):
