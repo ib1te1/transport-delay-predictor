@@ -77,7 +77,10 @@ def test_card_is_503_when_postgres_does_not_answer(
 
     monkeypatch.setattr(main_module, "_vehicle_predictions", down)
 
-    assert TestClient(app).get("/api/vehicles/7").status_code == 503
+    response = TestClient(app).get("/api/vehicles/7")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "vehicle state is not available yet"}
 
 
 def test_card_returns_the_vehicle_its_predictions_track_and_stops(
@@ -115,6 +118,16 @@ def test_card_returns_the_vehicle_its_predictions_track_and_stops(
             "delay_s": None,
         }
     ]
+
+
+def test_openapi_keeps_app_level_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main_module.app, "description", "probe")
+    monkeypatch.setattr(main_module.app, "openapi_schema", None)
+
+    schema = TestClient(app).get("/openapi.json").json()
+
+    assert schema["info"]["description"] == "probe"
+    assert "WsMessage" in schema["components"]["schemas"]
 
 
 def test_openapi_describes_the_dashboard_endpoints() -> None:
