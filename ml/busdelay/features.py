@@ -106,6 +106,7 @@ class Track:
 
     @classmethod
     def from_frame(cls, frame: pd.DataFrame) -> "Track":
+        """A vehicle's track from rows of :func:`busdelay.data.clean_telemetry`."""
         frame = frame.sort_values("t", kind="stable")
         return cls(
             t=frame["t"].to_numpy(dtype=float),
@@ -117,6 +118,7 @@ class Track:
 
     @classmethod
     def empty(cls) -> "Track":
+        """A track without a single fix."""
         nothing = np.array([], dtype=float)
         return cls(nothing, np.array([], dtype=bool), nothing, nothing, nothing)
 

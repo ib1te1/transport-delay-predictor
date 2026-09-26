@@ -46,6 +46,7 @@ DEFAULT_SUBMISSIONS = Path("../data/submissions")
 
 
 def cmd_features(args) -> int:
+    """``features``: feature tables, and the same points with ``cur_dev_s`` from GPS."""
     args.out.mkdir(parents=True, exist_ok=True)
     for name in args.parts:
         started = time.perf_counter()
@@ -86,6 +87,7 @@ def read_labeled(features: Path, parts: list[str], hint: str, outage: bool = Fal
 
 
 def cmd_arrivals(args) -> int:
+    """``arrivals``: how close the GPS arrival detector gets to the schedule facts."""
     for name in ("train", "test"):
         part = load_part(args.data, name)
         detected = []
@@ -143,6 +145,7 @@ def cross_validate(table: pd.DataFrame, make_model, n_folds: int, seed: int) -> 
 
 
 def print_scores(rows: dict[str, dict[str, float]]) -> None:
+    """Print a table of :func:`busdelay.metrics.summary` rows."""
     print(f"{'':>36} {'MAE':>7} {'vs pers':>8} {'bias':>7} {'p90':>7} {'score~':>7} {'rows':>6}")
     for name, s in rows.items():
         print(
@@ -152,6 +155,7 @@ def print_scores(rows: dict[str, dict[str, float]]) -> None:
 
 
 def cmd_baselines(args) -> int:
+    """``baselines``: cross-validate the simple predictors on the same folds as the model."""
     table = read_feature_table(args.features, ["train", "test"])
     y = table["target"].to_numpy(dtype=float)
     cur = table["cur_dev_s"].fillna(0.0).to_numpy()
@@ -180,6 +184,7 @@ def cmd_baselines(args) -> int:
 
 
 def cmd_submit_baseline(args) -> int:
+    """``submit-baseline``: fit one baseline on all labeled points and write a submission."""
     labeled = read_feature_table(args.features, ["train", "test"])
     validate = read_feature_table(args.features, ["validate"])
     model = BASELINES[args.kind]().fit(labeled, labeled["target"].to_numpy(dtype=float))
@@ -189,6 +194,7 @@ def cmd_submit_baseline(args) -> int:
 
 
 def cmd_train(args) -> int:
+    """``train``: cross-validate CatBoost, then fit it on all labeled points and save it."""
     config = TrainConfig(
         iterations=args.iterations,
         depth=args.depth,
@@ -224,6 +230,7 @@ def cmd_train(args) -> int:
 
 
 def cmd_blend(args) -> int:
+    """``blend``: average models trained on the same points into one saved model."""
     weights = args.weights or [1 / len(args.model)] * len(args.model)
     if len(weights) != len(args.model):
         raise ValueError(f"{len(args.model)} models but {len(weights)} weights")
@@ -248,6 +255,7 @@ def save_model(model: DelayModel, oof: pd.DataFrame, args) -> Path:
 
 
 def print_report(model: DelayModel, metrics: dict) -> None:
+    """Print the CV and control metrics a model was saved with."""
     print_scores(metrics["cv"])
     if "control" in metrics:
         print("\nfit on train, scored on test (the organisers' split):")
@@ -268,6 +276,7 @@ def print_report(model: DelayModel, metrics: dict) -> None:
 
 
 def cmd_predict(args) -> int:
+    """``predict``: write a submission for validate the way the service predicts."""
     # the service's path: a query per point, then the forecaster, with the organisers'
     # cur_dev_s that validate has
     part = load_part(args.data, "validate")
@@ -288,6 +297,7 @@ def cmd_predict(args) -> int:
 
 
 def cmd_bench(args) -> int:
+    """``bench``: time :class:`busdelay.online.LivePredictor` on validate telemetry."""
     model = DelayModel.load(args.model)
     part = load_part(args.data, "validate")
     predictor = LivePredictor(model, part.plan)
@@ -323,6 +333,7 @@ def cmd_bench(args) -> int:
 
 
 def cmd_outage(args) -> int:
+    """``outage``: MAE on test with the telemetry cut before ``T``, see :mod:`busdelay.outage`."""
     models = {Path(path).name: DelayModel.load(path) for path in args.model}
     if len(models) != len(args.model):
         raise ValueError("models must have different directory names")
@@ -352,10 +363,12 @@ def cmd_outage(args) -> int:
 
 
 def cmd_check(args) -> int:
+    """``check``: check a submission file."""
     return report_check(args.file, args.data)
 
 
 def report_check(path: Path, data: Path) -> int:
+    """Check a submission against ``validate/points.csv`` and print the result; 0 if it is fine."""
     expected = read_points(data / FILES["validate"][2], part="validate")["sample_id"]
     problems = check_submission(path, expected)
     if problems:
@@ -368,6 +381,7 @@ def report_check(path: Path, data: Path) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """The parser with every command and its options."""
     parser = argparse.ArgumentParser(prog="busdelay", description="Bus delay model.")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -494,6 +508,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run one command; returns the exit code."""
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

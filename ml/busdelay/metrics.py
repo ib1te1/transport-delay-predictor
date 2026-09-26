@@ -17,6 +17,7 @@ TARGET_TO_ZERO = 0.76
 
 
 def mae(y_true, y_pred) -> float:
+    """Mean absolute error, the platform metric."""
     return float(np.mean(np.abs(np.asarray(y_true, dtype=float) - np.asarray(y_pred, dtype=float))))
 
 
@@ -40,6 +41,7 @@ def roc_auc(labels, scores) -> float:
 
 
 def classifier_summary(labels, probability) -> dict[str, float]:
+    """AUC, log loss and Brier score of the late probability against 0/1 labels."""
     labels = np.asarray(labels, dtype=float)
     p = np.clip(np.asarray(probability, dtype=float), 1e-6, 1 - 1e-6)
     return {

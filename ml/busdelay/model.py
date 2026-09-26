@@ -81,9 +81,11 @@ class TrainConfig:
     gpu: bool = False
 
     def columns(self) -> list[str]:
+        """Feature columns the models get."""
         return FEATURES + ([VEHICLE_COLUMN] if self.vehicle else [])
 
     def catboost_params(self, iterations: int | None = None, seed: int | None = None) -> dict:
+        """CatBoost settings for one model of this run."""
         return {
             "iterations": iterations or self.iterations,
             "depth": self.depth,
@@ -180,11 +182,13 @@ class DelayModel:
         return out
 
     def importance(self, top: int = 20) -> list[tuple[str, float]]:
+        """The ``top`` features by CatBoost importance of the regressor."""
         values = self.regressor.get_feature_importance()
         order = np.argsort(-values)[:top]
         return [(self.columns[i], round(float(values[i]), 2)) for i in order]
 
     def save(self, directory: Path | str) -> Path:
+        """Write the models and ``meta.json`` into ``directory``."""
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
         self.regressor.save_model(str(directory / REGRESSOR_FILE))
@@ -207,6 +211,7 @@ class DelayModel:
 
     @classmethod
     def load(cls, directory: Path | str) -> "DelayModel":
+        """Read a model written by :meth:`save`."""
         directory = Path(directory)
         meta = json.loads((directory / META_FILE).read_text(encoding="utf-8"))
         regressor = CatBoostRegressor()
@@ -297,6 +302,9 @@ def fit_models(
 
 @dataclass
 class CVResult:
+    """Out-of-fold results: fold of every row, the two lines, the model, the late probability
+    and the chosen numbers of trees."""
+
     folds: np.ndarray
     base: np.ndarray
     oof: np.ndarray

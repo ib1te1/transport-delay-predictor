@@ -30,6 +30,7 @@ RISK_LEVELS = ((0.6, "red"), (0.3, "yellow"))
 
 
 def risk_level(late_prob: float) -> str:
+    """Risk colour by the probability of being late, see ``RISK_LEVELS``."""
     for threshold, colour in RISK_LEVELS:
         if late_prob >= threshold:
             return colour
@@ -38,6 +39,8 @@ def risk_level(late_prob: float) -> str:
 
 @dataclass
 class Forecast:
+    """One live forecast. Times in seconds since the epoch, the interval from CV residuals."""
+
     tr_id: int
     as_of: float
     target_stop_id: int
@@ -73,6 +76,7 @@ class LivePredictor:
             fixes.popleft()
 
     def track(self, tr_id: int, now: float) -> Track:
+        """The vehicle's buffered fixes up to ``now``."""
         fixes = self._fixes.get(int(tr_id))
         if not fixes:
             return Track.empty()

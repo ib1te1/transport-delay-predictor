@@ -10,6 +10,8 @@ from common.config import REPO_ROOT, StrictModel
 
 
 class PredictorConfig(StrictModel):
+    """The ``predictor`` section of ``config/system.yaml``."""
+
     # gps - estimated from the request's telemetry, the way the model saw it in training;
     # the value sent with the request only fills in when the estimate fails.
     # request - as sent.

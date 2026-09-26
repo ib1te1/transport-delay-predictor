@@ -43,6 +43,8 @@ def log_to_stderr() -> None:
 
 
 def create_app(settings: PredictorSettings | None = None) -> FastAPI:
+    """The service; ``settings`` replace the environment in tests."""
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log_to_stderr()
@@ -60,6 +62,7 @@ def create_app(settings: PredictorSettings | None = None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, str]:
+        """Liveness for the compose healthcheck."""
         return {"status": "ok", "service": "predictor"}
 
     @app.post("/predict")

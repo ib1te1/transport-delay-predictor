@@ -60,6 +60,8 @@ class Query:
 
 @dataclass
 class Answer:
+    """The forecast for one :class:`Query`."""
+
     sample_id: str
     delay_s: float
     # NaN when the model has no classifier or the point fell back to the baseline
@@ -106,6 +108,7 @@ class Forecaster:
         self.hint = hint
 
     def cur_dev(self, query: Query, plan: VehiclePlan, track: Track) -> float:
+        """The ``cur_dev_s`` the forecast is made with: sent or estimated, by ``hint``."""
         sent = float(query.cur_dev_s)
         if self.hint == "given":
             return sent

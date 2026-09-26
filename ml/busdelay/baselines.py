@@ -37,9 +37,11 @@ class Zero:
     name = "zero"
 
     def fit(self, frame, y):
+        """Nothing to learn."""
         return self
 
     def predict(self, frame):
+        """Zero for every row."""
         return np.zeros(len(frame))
 
 
@@ -49,9 +51,11 @@ class Persistence:
     name = "persistence"
 
     def fit(self, frame, y):
+        """Nothing to learn."""
         return self
 
     def predict(self, frame):
+        """``cur_dev_s``, zero where it is missing."""
         return _cur_dev(frame)
 
 
@@ -61,10 +65,12 @@ class Linear:
     name = "linear"
 
     def fit(self, frame, y):
+        """Pick ``a`` and ``b`` by MAE, see :func:`fit_l1_line`."""
         self.a, self.b = fit_l1_line(_cur_dev(frame), y)
         return self
 
     def predict(self, frame):
+        """``a * cur_dev_s + b``."""
         return self.a * _cur_dev(frame) + self.b
 
 
@@ -78,6 +84,7 @@ class SplitLinear:
     name = "split_linear"
 
     def fit(self, frame, y):
+        """One line by MAE for each group: with a layover ahead and without."""
         y = np.asarray(y, dtype=float)
         after_layover = frame["new_trip_ahead"].to_numpy() > 0
         self.lines = {}
@@ -89,6 +96,7 @@ class SplitLinear:
         return self
 
     def predict(self, frame):
+        """Every row by the line of its group."""
         after_layover = frame["new_trip_ahead"].to_numpy() > 0
         x = _cur_dev(frame)
         result = np.empty(len(frame))

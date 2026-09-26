@@ -36,9 +36,13 @@ REASON_CODES = {
 
 
 class Predictor(Protocol):
+    """What answers ``POST /predict``: the model or the baseline."""
+
     version: str
 
-    def predict(self, requests: list[PredictRequest]) -> list[PredictResponse]: ...
+    def predict(self, requests: list[PredictRequest]) -> list[PredictResponse]:
+        """Answers in the order of the requests."""
+        ...
 
 
 def baseline_response(request: PredictRequest) -> PredictResponse:
@@ -53,16 +57,22 @@ def baseline_response(request: PredictRequest) -> PredictResponse:
 
 
 class BaselinePredictor:
+    """The baseline for every request, when there is no model; ``why`` says why."""
+
     version = BASELINE_VERSION
 
     def __init__(self, why: str = "no model configured"):
         self.why = why
 
     def predict(self, requests: list[PredictRequest]) -> list[PredictResponse]:
+        """The baseline for every request."""
         return [baseline_response(r) for r in requests]
 
 
 class ModelPredictor:
+    """The delay model from ``model_dir`` behind the same
+    :class:`busdelay.inference.Forecaster` the submission is made with."""
+
     def __init__(self, model_dir: Path, config: PredictorConfig):
         self.model = DelayModel.load(model_dir)
         hint = "gps" if config.cur_dev_source == "gps" else "given"
@@ -73,6 +83,8 @@ class ModelPredictor:
         self._lock = threading.Lock()
 
     def predict(self, requests: list[PredictRequest]) -> list[PredictResponse]:
+        """One forecast call for the whole batch; a point the model cannot use gets the
+        baseline, the rest of the batch does not."""
         queries = [to_query(r) for r in requests]
         with self._lock:
             answers = self.forecaster.predict(queries)
