@@ -27,6 +27,7 @@ jobs:
     outputs:
       tests: ${{ steps.select.outputs.tests }}
       web: ${{ steps.select.outputs.web }}
+      ingest: ${{ steps.select.outputs.ingest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,8 +79,15 @@ jobs:
           fi
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
+          if $all || printf '%s\n' "$files" | grep -Eq '^(services/ingest/|migrations/|packages/|config/)'; then
+            ingest=true
+          else
+            ingest=false
+          fi
+          echo "ingest=$ingest" >> "$GITHUB_OUTPUT"
           echo "tests=$tests"
           echo "web=$web"
+          echo "ingest=$ingest"
 
   lint:
     runs-on: ubuntu-latest
@@ -168,6 +176,19 @@ jobs:
       # named "app", and a single run from the root would bind it to one.
       - run: pytest
         working-directory: ${{ matrix.dir }}
+
+  ingest-image:
+    needs: changes
+    if: needs.changes.outputs.ingest == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose --profile replay --profile emulator config -q
+      - run: docker compose up --build -d ingest
+      - run: curl --fail --retry 15 --retry-delay 2 --retry-connrefused http://127.0.0.1:8001/health
+      - if: always()
+        run: docker compose down -v
 
   web:
     needs: changes
