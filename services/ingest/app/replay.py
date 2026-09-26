@@ -4,12 +4,17 @@ import argparse
 import asyncio
 import hashlib
 import logging
+import shutil
 import signal
+import tempfile
+import threading
 from collections import Counter
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from psycopg_pool import ConnectionPool
 from redis.asyncio import Redis
@@ -17,7 +22,7 @@ from redis.asyncio import Redis
 from app.config import ReplayConfig, load_replay_config, to_utc
 from app.normalize import from_csv
 from app.outbox import Outbox
-from app.sort import sorted_csv_rows
+from app.sort import SortedCsvRow, SortResult, read_sorted, sort_to_file
 from app.store import (
     RunState,
     advance_replay_cursor,
@@ -33,6 +38,13 @@ from contracts import TelemetryRecord
 log = logging.getLogger(__name__)
 
 type Sleep = Callable[[float], Awaitable[None]]
+type Save = Callable[[int, TelemetryRecord, tuple[datetime, int]], Awaitable[int]]
+type Skip = Callable[[tuple[datetime, int]], Awaitable[None]]
+type Delivered = Callable[[int], Awaitable[None]]
+
+SORT_DIR_PREFIX = "ingest-replay-"
+# docker compose stop escalates to SIGKILL after 10 s; the sort thread gets half.
+SORT_STOP_WAIT_SEC = 5.0
 
 
 @dataclass
@@ -48,6 +60,14 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def remove_stale_sort_dirs(root: Path) -> None:
+    """Delete sort directories left by a killed replay; one replay runs per container."""
+    for stale in root.glob(f"{SORT_DIR_PREFIX}*"):
+        if stale.is_dir():
+            log.info("removing stale replay sort directory %s", stale)
+            shutil.rmtree(stale, ignore_errors=True)
 
 
 def _start(
@@ -94,44 +114,63 @@ def _status(pool: ConnectionPool, run: RunState, status: str) -> None:
         set_run_status(conn, run.run_id, status)
 
 
-async def play_sorted_rows(
+async def sort_in_thread(
     path: Path,
-    config: ReplayConfig,
-    source_zone,
-    vehicles: dict[int, int],
-    run: RunState,
+    source_zone: ZoneInfo,
+    chunk_rows: int,
+    out_dir: Path,
     *,
-    save: Callable[[int, TelemetryRecord, tuple[datetime, int]], Awaitable[int]],
-    skip: Callable[[tuple[datetime, int]], Awaitable[None]],
-    delivered: Callable[[int], Awaitable[None]],
+    start_at: datetime | None,
+    end_at: datetime | None,
+    after: tuple[datetime, int] | None,
+) -> SortResult:
+    """Run the external sort in a worker thread that stops when this task is cancelled.
+
+    A thread cannot be cancelled, so cancellation sets ``stop`` and waits a
+    bounded time for the thread to leave before the caller removes its files.
+    """
+    stop = threading.Event()
+    worker = asyncio.create_task(
+        asyncio.to_thread(
+            sort_to_file,
+            path,
+            source_zone,
+            chunk_rows,
+            out_dir,
+            start_at=start_at,
+            end_at=end_at,
+            after=after,
+            stop=stop,
+        )
+    )
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        stop.set()
+        done, _ = await asyncio.wait({worker}, timeout=SORT_STOP_WAIT_SEC)
+        if not done:
+            log.warning("replay sort did not stop within %.0f s", SORT_STOP_WAIT_SEC)
+        elif not worker.cancelled():
+            # Expected SortCancelled; retrieving it keeps asyncio from reporting it.
+            worker.exception()
+        raise
+
+
+async def play_sorted_rows(
+    rows: Iterable[SortedCsvRow],
+    config: ReplayConfig,
+    source_zone: ZoneInfo,
+    vehicles: dict[int, int],
+    *,
+    save: Save,
+    skip: Skip,
+    delivered: Delivered,
     sleep: Sleep = asyncio.sleep,
 ) -> ReplayStats:
-    """Pace sorted points and keep the cursor at the last stored input."""
+    """Pace rows that are already sorted, range-filtered and past the resume cursor."""
     stats = ReplayStats()
-
-    def bad_time(line_number: int) -> None:
-        stats.skipped["event_time"] += 1
-        if stats.skipped["event_time"] <= 20:
-            log.warning("skipping CSV line %d: invalid event_time", line_number)
-
-    start_at = to_utc(config.start_at, source_zone) if config.start_at else None
-    end_at = to_utc(config.end_at, source_zone) if config.end_at else None
     previous_published: datetime | None = None
-    selected = 0
-
-    def read_row() -> None:
-        stats.read += 1
-
-    for item in sorted_csv_rows(
-        path, source_zone, config.sort_chunk_rows, on_bad_time=bad_time, on_row=read_row
-    ):
-        if start_at is not None and item.event_time < start_at:
-            continue
-        if end_at is not None and item.event_time > end_at:
-            break
-        selected += 1
-        if run.cursor is not None and item.key <= run.cursor:
-            continue
+    for item in rows:
         result = from_csv(item.values, vehicles, source_zone)
         if result.record is None:
             reason = result.reason or "invalid"
@@ -148,8 +187,50 @@ async def play_sorted_rows(
         await delivered(row_id)
         stats.published += 1
         previous_published = item.event_time
-    if not selected:
+    return stats
+
+
+async def sort_and_play(
+    path: Path,
+    config: ReplayConfig,
+    source_zone: ZoneInfo,
+    vehicles: dict[int, int],
+    work_dir: Path,
+    *,
+    after: tuple[datetime, int] | None,
+    save: Save,
+    skip: Skip,
+    delivered: Delivered,
+    sleep: Sleep = asyncio.sleep,
+) -> ReplayStats:
+    """Sort the selected range off the event loop, then play what follows ``after``."""
+    start_at = to_utc(config.start_at, source_zone) if config.start_at else None
+    end_at = to_utc(config.end_at, source_zone) if config.end_at else None
+    result = await sort_in_thread(
+        path,
+        source_zone,
+        config.sort_chunk_rows,
+        work_dir,
+        start_at=start_at,
+        end_at=end_at,
+        after=after,
+    )
+    if not result.selected:
         raise ValueError("the selected replay time range contains no telemetry")
+    with closing(read_sorted(result.path)) as rows:
+        stats = await play_sorted_rows(
+            rows,
+            config,
+            source_zone,
+            vehicles,
+            save=save,
+            skip=skip,
+            delivered=delivered,
+            sleep=sleep,
+        )
+    stats.read = result.read
+    if result.bad_time:
+        stats.skipped["event_time"] += result.bad_time
     return stats
 
 
@@ -163,17 +244,20 @@ async def run_replay(
         raise FileNotFoundError(f"replay dataset is missing: {path}")
     start_at = to_utc(config.start_at, dataset.zone) if config.start_at else None
     end_at = to_utc(config.end_at, dataset.zone) if config.end_at else None
+    remove_stale_sort_dirs(Path(tempfile.gettempdir()))
     pool = make_pool(settings.database_url)
     pool.open(wait=False)
     redis = Redis.from_url(settings.redis_url)
     run: RunState | None = None
     completed = False
+    work_dir: Path | None = None
     try:
         outbox = Outbox(pool, redis)
         await outbox.drain()
         run, vehicles = await asyncio.to_thread(
             _start, pool, path, config, start_at, end_at, new_run=new_run
         )
+        work_dir = Path(tempfile.mkdtemp(prefix=SORT_DIR_PREFIX))
 
         async def save(
             line_number: int, record: TelemetryRecord, cursor: tuple[datetime, int]
@@ -183,12 +267,13 @@ async def run_replay(
         async def skip(cursor: tuple[datetime, int]) -> None:
             await asyncio.to_thread(_skip, pool, run, cursor)
 
-        stats = await play_sorted_rows(
+        stats = await sort_and_play(
             path,
             config,
             dataset.zone,
             vehicles,
-            run,
+            work_dir,
+            after=run.cursor,
             save=save,
             skip=skip,
             delivered=outbox.wait_for,
@@ -210,6 +295,8 @@ async def run_replay(
                 await asyncio.to_thread(_status, pool, run, "interrupted")
             except Exception:
                 log.exception("could not mark interrupted replay run")
+        if work_dir is not None:
+            shutil.rmtree(work_dir, ignore_errors=True)
         await redis.aclose()
         await asyncio.to_thread(pool.close)
 
