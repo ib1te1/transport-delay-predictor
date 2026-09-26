@@ -1,80 +1,21 @@
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import PredictorConfig, PredictorSettings
+from app.examples import START
+from app.examples import bus_request as request
 from app.main import create_app
 from app.predictor import REASON_CODES, reason_codes, to_query, to_response
 from busdelay.explain import REASONS
 from busdelay.inference import Answer
 from common.config import REPO_ROOT, load_section
-from contracts import (
-    PredictRequest,
-    PredictResponse,
-    ReasonCode,
-    ScheduledStop,
-    TelemetryPoint,
-    make_sample_id,
-)
+from contracts import PredictRequest, PredictResponse, ReasonCode
 
 SYSTEM_YAML = REPO_ROOT / "config" / "system.yaml"
 MODEL_DIR = REPO_ROOT / "models" / "current"
-START = datetime(2026, 1, 6, 4, 0, tzinfo=UTC)
-
-
-def stops(tr_id: int, n: int = 120) -> list[ScheduledStop]:
-    """A street to the east, a stop every ~310 m and every minute, a layover after stop 59."""
-    return [
-        ScheduledStop(
-            stop_id=tr_id * 1000 + k,
-            time_plan=START + timedelta(minutes=k + (10 if k >= 60 else 0)),
-            lat=55.75 + tr_id * 0.01,
-            lon=37.60 + 0.005 * k,
-            time_fact=None,
-        )
-        for k in range(n)
-    ]
-
-
-def fixes(schedule: list[ScheduledStop], late_s: float, until: datetime) -> list[TelemetryPoint]:
-    """A bus that reaches every stop ``late_s`` after the plan, a fix every 10 s."""
-    points = []
-    for a, b in zip(schedule, schedule[1:], strict=False):
-        leave, arrive = a.time_plan + timedelta(seconds=late_s + 20), b.time_plan
-        arrive += timedelta(seconds=late_s)
-        t = a.time_plan + timedelta(seconds=late_s)
-        while t < arrive and t <= until:
-            share = 0.0 if t <= leave else (t - leave) / (arrive - leave)
-            points.append(
-                TelemetryPoint(
-                    event_time=t,
-                    lat=a.lat,
-                    lon=a.lon + (b.lon - a.lon) * share,
-                    location_valid=True,
-                    speed_kmh=0.0 if t <= leave else 30.0,
-                    heading_deg=90.0,
-                )
-            )
-            t += timedelta(seconds=10)
-    return points
-
-
-def request(tr_id: int, late_s: float, cur_dev_s: float | None = None) -> PredictRequest:
-    T = START + timedelta(minutes=40)
-    schedule = stops(tr_id)
-    target = next(s for s in schedule if s.time_plan > T + timedelta(minutes=10))
-    return PredictRequest(
-        sample_id=make_sample_id(tr_id, T),
-        tr_id=tr_id,
-        T=T,
-        target_stop_id=target.stop_id,
-        target_time_begin=target.time_plan,
-        cur_dev_s=cur_dev_s,
-        telemetry=fixes(schedule, late_s, T),
-        schedule=[s for s in schedule if s.time_plan <= target.time_plan],
-    )
 
 
 def post(client: TestClient, requests: list[PredictRequest]) -> list[PredictResponse]:
@@ -152,6 +93,17 @@ def test_stale_telemetry_is_added_by_the_age_of_the_last_position():
     assert reasons(math.nan) == [ReasonCode.accumulated_delay, ReasonCode.stale_telemetry]
     alone = Answer("s", 0.0, 0.1, [], 0.0, position_age_s=math.nan)
     assert to_response(alone, "v", 120.0).reasons == [ReasonCode.stale_telemetry]
+
+
+def test_the_swagger_example_gets_the_model(client):
+    schema = client.get("/openapi.json").json()
+    body = schema["paths"]["/predict"]["post"]["requestBody"]["content"]["application/json"]
+    response = client.post("/predict", json=body["examples"]["late_bus"]["value"])
+
+    assert response.status_code == 200
+    answer = PredictResponse.model_validate(response.json()[0])
+    assert answer.model_version.startswith("current@")
+    assert answer.prediction_s > 120 and ReasonCode.accumulated_delay in answer.reasons
 
 
 def test_model_endpoint_reports_the_model(client):

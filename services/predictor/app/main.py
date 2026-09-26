@@ -9,14 +9,26 @@ model and a broken one does not take it down.
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 from app.config import PredictorConfig, PredictorSettings
+from app.examples import bus_request
 from app.predictor import BaselinePredictor, ModelPredictor, Predictor, load_predictor
 from common.config import load_section
 from contracts import PredictRequest, PredictResponse
+
+# The schema's own example for /predict gets only the baseline: its target stop is not ahead
+# of T. This one is a made-up bus the model answers for.
+PREDICT_EXAMPLES = {
+    "late_bus": {
+        "summary": "A bus 4 minutes late",
+        "description": "40 minutes into the trip, a fix every 30 s, no cur_dev_s from matcher.",
+        "value": [bus_request(1, 240.0, step_s=30).model_dump(mode="json")],
+    }
+}
 
 
 class ModelInfo(BaseModel):
@@ -90,6 +102,22 @@ def create_app(settings: PredictorSettings | None = None) -> FastAPI:
             note=getattr(predictor, "why", None),
         )
 
+    fastapi_openapi = app.openapi
+
+    def openapi_with_example() -> dict[str, Any]:
+        """FastAPI's schema plus a ready batch for "Try it out" on ``/predict``, built once.
+
+        The example goes in after FastAPI: it drops null values from examples, and the
+        contract requires ``cur_dev_s`` and ``time_fact`` even when they are null.
+        """
+        if app.openapi_schema is None:
+            schema = fastapi_openapi()
+            body = schema["paths"]["/predict"]["post"]["requestBody"]["content"]
+            body["application/json"]["examples"] = PREDICT_EXAMPLES
+            app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = openapi_with_example
     return app
 
 
