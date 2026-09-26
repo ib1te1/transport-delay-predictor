@@ -6,6 +6,7 @@ predicted delay equals the current deviation), so the system starts without a tr
 model and a broken one does not take it down.
 """
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -30,9 +31,21 @@ class ModelInfo(BaseModel):
     cv_mae_s: dict[str, float] = {}
 
 
+def log_to_stderr() -> None:
+    """uvicorn sets up only its own loggers; without this the service's INFO lines, such as
+    which model was loaded, are lost."""
+    log = logging.getLogger("app")
+    if not log.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s: %(message)s"))
+        log.addHandler(handler)
+        log.setLevel(logging.INFO)
+
+
 def create_app(settings: PredictorSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        log_to_stderr()
         current = settings or PredictorSettings()
         config = load_section(current.config_path, "predictor", PredictorConfig)
         app.state.predictor = load_predictor(current.model_dir, config)
