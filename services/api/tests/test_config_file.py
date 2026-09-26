@@ -14,7 +14,7 @@ def test_repository_config_has_valid_api_section():
 
 
 def test_repository_config_has_valid_seed_section():
-    assert load_section(SYSTEM_YAML, "seed", SeedConfig).period == "test"
+    assert load_section(SYSTEM_YAML, "seed", SeedConfig).period == "validate"
 
 
 def test_repository_config_has_valid_dataset_section():

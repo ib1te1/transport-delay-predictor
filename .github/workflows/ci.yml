@@ -215,13 +215,15 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose --profile replay --profile emulator config -q
       - name: Prepare replay smoke data
+        # Files of the demo period, seed.period and replay.period in
+        # config/system.yaml.
         run: |
-          mkdir -p data/dataset/test
-          cat > data/dataset/test/schedule.csv <<'CSV'
+          mkdir -p data/dataset/validate
+          cat > data/dataset/validate/schedule_plan.csv <<'CSV'
           tt_action_item_id,tr_id,geom,time_begin
           1,2,POINT (38 55),2026-01-06 00:00:01
           CSV
-          cat > data/dataset/test/traffic.csv <<'CSV'
+          cat > data/dataset/validate/traffic.csv <<'CSV'
           unit_id,tr_id,event_time,location_valid,lat,lon,speed,heading
           1,2,2026-01-06 00:00:03,True,55,38,20,90
           1,2,2026-01-06 00:00:01,True,55,38,20,90
