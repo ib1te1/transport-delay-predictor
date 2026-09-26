@@ -8,6 +8,7 @@ import shutil
 import signal
 import tempfile
 import threading
+import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import closing
@@ -41,10 +42,13 @@ type Sleep = Callable[[float], Awaitable[None]]
 type Save = Callable[[int, TelemetryRecord, tuple[datetime, int]], Awaitable[int]]
 type Skip = Callable[[tuple[datetime, int]], Awaitable[None]]
 type Delivered = Callable[[int], Awaitable[None]]
+type Clock = Callable[[], float]
 
 SORT_DIR_PREFIX = "ingest-replay-"
 # docker compose stop escalates to SIGKILL after 10 s; the sort thread gets half.
 SORT_STOP_WAIT_SEC = 5.0
+LAG_LOG_THRESHOLD_SEC = 1.0
+LAG_LOG_INTERVAL_SEC = 60.0
 
 
 @dataclass
@@ -166,10 +170,18 @@ async def play_sorted_rows(
     skip: Skip,
     delivered: Delivered,
     sleep: Sleep = asyncio.sleep,
+    clock: Clock = time.monotonic,
 ) -> ReplayStats:
-    """Pace rows that are already sorted, range-filtered and past the resume cursor."""
+    """Publish sorted rows on a schedule anchored at the first row this process publishes.
+
+    Each row is due at anchor_wall + (event_time - anchor_event) / speedup,
+    so the time spent saving and delivering shortens the next pause instead
+    of adding up. A late row goes out at once; the anchor never moves, so
+    playback returns to schedule after a stall.
+    """
     stats = ReplayStats()
-    previous_published: datetime | None = None
+    anchor: tuple[float, datetime] | None = None
+    last_lag_log: float | None = None
     for item in rows:
         result = from_csv(item.values, vehicles, source_zone)
         if result.record is None:
@@ -179,14 +191,23 @@ async def play_sorted_rows(
                 log.warning("skipping CSV line %d: %s", item.line_number, reason)
             await skip(item.key)
             continue
-        if previous_published is not None:
-            delay = (item.event_time - previous_published).total_seconds() / config.speedup
+        if anchor is None:
+            anchor = (clock(), item.event_time)
+        else:
+            anchor_wall, anchor_event = anchor
+            due = anchor_wall + (item.event_time - anchor_event).total_seconds() / config.speedup
+            now = clock()
+            delay = due - now
             if delay > 0:
                 await sleep(delay)
+            elif -delay > LAG_LOG_THRESHOLD_SEC and (
+                last_lag_log is None or now - last_lag_log >= LAG_LOG_INTERVAL_SEC
+            ):
+                log.info("replay lag_sec=%.1f", -delay)
+                last_lag_log = now
         row_id = await save(item.line_number, result.record, item.key)
         await delivered(row_id)
         stats.published += 1
-        previous_published = item.event_time
     return stats
 
 
@@ -202,6 +223,7 @@ async def sort_and_play(
     skip: Skip,
     delivered: Delivered,
     sleep: Sleep = asyncio.sleep,
+    clock: Clock = time.monotonic,
 ) -> ReplayStats:
     """Sort the selected range off the event loop, then play what follows ``after``."""
     start_at = to_utc(config.start_at, source_zone) if config.start_at else None
@@ -227,6 +249,7 @@ async def sort_and_play(
             skip=skip,
             delivered=delivered,
             sleep=sleep,
+            clock=clock,
         )
     stats.read = result.read
     if result.bad_time:
@@ -235,7 +258,11 @@ async def sort_and_play(
 
 
 async def run_replay(
-    settings: ServiceSettings, *, new_run: bool = False, sleep: Sleep = asyncio.sleep
+    settings: ServiceSettings,
+    *,
+    new_run: bool = False,
+    sleep: Sleep = asyncio.sleep,
+    clock: Clock = time.monotonic,
 ) -> ReplayStats:
     """Resume an interrupted replay or run a new one when explicitly requested."""
     config, dataset = load_replay_config(settings.config_path)
@@ -278,6 +305,7 @@ async def run_replay(
             skip=skip,
             delivered=outbox.wait_for,
             sleep=sleep,
+            clock=clock,
         )
         await asyncio.to_thread(_status, pool, run, "completed")
         completed = True

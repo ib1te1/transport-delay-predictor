@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import tempfile
 import threading
 import time
@@ -10,6 +11,7 @@ import pytest
 
 from app.config import ReplayConfig
 from app.replay import (
+    ReplayStats,
     file_sha256,
     play_sorted_rows,
     remove_stale_sort_dirs,
@@ -17,7 +19,7 @@ from app.replay import (
     sort_and_play,
     sort_in_thread,
 )
-from app.sort import SortCancelled, read_sorted, sort_to_file
+from app.sort import SortCancelled, SortedCsvRow, read_sorted, sort_to_file
 from common.config import ServiceSettings
 from common.db import connect
 from contracts import TelemetryRecord
@@ -70,15 +72,76 @@ async def no_sleep(_delay: float) -> None:
     pass
 
 
+class FakeClock:
+    """Monotonic time that moves only when playback sleeps or saves."""
+
+    def __init__(self) -> None:
+        self.now = 100.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    async def sleep(self, delay: float) -> None:
+        assert delay > 0
+        self.sleeps.append(delay)
+        self.now += delay
+
+
+def point(second: int, line: int, unit_id: str = "1") -> SortedCsvRow:
+    return SortedCsvRow(
+        datetime(2026, 1, 6, 0, 0, second, tzinfo=UTC),
+        line,
+        {
+            "unit_id": unit_id,
+            "tr_id": "2",
+            "event_time": f"2026-01-06 00:00:{second:02d}",
+            "location_valid": "False",
+            "lat": "",
+            "lon": "",
+            "speed": "",
+            "heading": "",
+        },
+    )
+
+
+async def play_timed(
+    rows: list[SortedCsvRow], clock: FakeClock, costs: list[float]
+) -> tuple[list[float], ReplayStats]:
+    """Play at speedup 1; each save advances the clock by the next cost."""
+    published: list[float] = []
+    cost = iter(costs)
+
+    async def save(line: int, _record: TelemetryRecord, _cursor: tuple[datetime, int]) -> int:
+        published.append(clock.now)
+        clock.now += next(cost)
+        return line
+
+    async def skip(_cursor: tuple[datetime, int]) -> None:
+        pass
+
+    async def delivered(_row_id: int) -> None:
+        pass
+
+    stats = await play_sorted_rows(
+        rows,
+        ReplayConfig(speedup=1),
+        ZONE,
+        {1: 2},
+        save=save,
+        skip=skip,
+        delivered=delivered,
+        sleep=clock.sleep,
+        clock=clock,
+    )
+    return published, stats
+
+
 @pytest.mark.anyio
 async def test_replay_paces_sorted_points_without_changing_dataset_time(tmp_path: Path) -> None:
     result = sort_to_file(traffic_file(tmp_path), ZONE, 2, work_dir(tmp_path))
     sink = Sink()
-    delays: list[float] = []
-
-    async def sleep(delay: float) -> None:
-        delays.append(delay)
-
+    clock = FakeClock()
     stats = await play_sorted_rows(
         read_sorted(result.path),
         ReplayConfig(speedup=2, sort_chunk_rows=2),
@@ -87,11 +150,12 @@ async def test_replay_paces_sorted_points_without_changing_dataset_time(tmp_path
         save=sink.save,
         skip=sink.skip,
         delivered=sink.delivered,
-        sleep=sleep,
+        sleep=clock.sleep,
+        clock=clock,
     )
     assert sink.lines == [3, 4, 2]
     assert [record.event_time.second for _, record, _ in sink.saved] == [1, 2, 3]
-    assert delays == [0.5, 0.5]
+    assert clock.sleeps == [0.5, 0.5]
     assert sink.skipped == []
     assert stats.published == 3
 
@@ -272,3 +336,72 @@ async def test_cancel_during_sort_marks_the_run_interrupted_and_removes_sort_fil
                 (sha,),
             )
             conn.execute("DELETE FROM ingest_runs WHERE file_sha256 = %s", (sha,))
+
+
+@pytest.mark.anyio
+async def test_processing_time_is_absorbed_by_the_next_pause() -> None:
+    clock = FakeClock()
+    published, _ = await play_timed([point(0, 2), point(1, 3), point(2, 4)], clock, [0.3] * 3)
+    assert published == pytest.approx([100.0, 101.0, 102.0])
+    assert clock.sleeps == pytest.approx([0.7, 0.7])
+    assert clock.now == pytest.approx(102.3)
+
+
+@pytest.mark.anyio
+async def test_late_rows_go_out_at_once_until_back_on_schedule() -> None:
+    clock = FakeClock()
+    rows = [point(second, second + 2) for second in range(5)]
+    published, _ = await play_timed(rows, clock, [2.0, 0.1, 0.1, 0.1, 0.1])
+    assert published == pytest.approx([100.0, 102.0, 102.1, 103.0, 104.0])
+    assert clock.sleeps == pytest.approx([0.8, 0.9])
+
+
+@pytest.mark.anyio
+async def test_lag_is_logged_at_most_once_a_minute(caplog: pytest.LogCaptureFixture) -> None:
+    clock = FakeClock()
+    rows = [point(second, second + 2) for second in range(4)]
+    with caplog.at_level(logging.INFO, logger="app.replay"):
+        await play_timed(rows, clock, [3.0] * 4)
+    lag = [r.getMessage() for r in caplog.records if "replay lag_sec=" in r.getMessage()]
+    assert lag == ["replay lag_sec=2.0"]
+    assert clock.sleeps == []
+
+
+@pytest.mark.anyio
+async def test_invalid_row_neither_waits_nor_sets_the_anchor() -> None:
+    clock = FakeClock()
+    rows = [point(0, 2, unit_id="x"), point(5, 3), point(6, 4)]
+    published, stats = await play_timed(rows, clock, [0.0, 0.0])
+    assert published == pytest.approx([100.0, 101.0])
+    assert clock.sleeps == [1.0]
+    assert stats.skipped == {"unit_id": 1}
+
+
+@pytest.mark.anyio
+async def test_resume_anchors_on_the_first_row_after_the_cursor(tmp_path: Path) -> None:
+    traffic = tmp_path / "traffic.csv"
+    traffic.write_text(
+        HEADER
+        + "1,2,2026-01-06 00:00:01,False,,,,\n"
+        + "1,2,2026-01-06 00:00:02,False,,,,\n"
+        + "1,2,2026-01-06 00:00:03,False,,,,\n"
+        + "1,2,2026-01-06 00:00:04,False,,,,\n",
+        encoding="utf-8",
+    )
+    sink = Sink()
+    clock = FakeClock()
+    await sort_and_play(
+        traffic,
+        ReplayConfig(speedup=1),
+        ZONE,
+        {1: 2},
+        work_dir(tmp_path),
+        after=(datetime(2026, 1, 6, 0, 0, 2, tzinfo=UTC), 3),
+        save=sink.save,
+        skip=sink.skip,
+        delivered=sink.delivered,
+        sleep=clock.sleep,
+        clock=clock,
+    )
+    assert sink.lines == [4, 5]
+    assert clock.sleeps == [1.0]
