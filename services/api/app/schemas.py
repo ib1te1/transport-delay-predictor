@@ -130,6 +130,8 @@ class VehicleCard(BaseModel):
 
 
 class ClockData(BaseModel):
+    """Sequence number and current clock time."""
+
     seq: int
     clock: AwareDatetime
 
@@ -144,32 +146,44 @@ class VehiclesData(BaseModel):
 
 
 class PredictionData(BaseModel):
+    """Vehicle prediction update with sequence number."""
+
     seq: int
     tr_id: int
     prediction: PredictionView
 
 
 class AlertData(BaseModel):
+    """Alert with sequence number."""
+
     seq: int
     alert: AlertView
 
 
 class ClockMessage(BaseModel):
+    """WebSocket message: current clock (type: clock)."""
+
     type: Literal["clock"]
     data: ClockData
 
 
 class VehiclesMessage(BaseModel):
+    """WebSocket message: vehicle updates (type: vehicles)."""
+
     type: Literal["vehicles"]
     data: VehiclesData
 
 
 class PredictionMessage(BaseModel):
+    """WebSocket message: prediction update (type: prediction)."""
+
     type: Literal["prediction"]
     data: PredictionData
 
 
 class AlertMessage(BaseModel):
+    """WebSocket message: alert (type: alert)."""
+
     type: Literal["alert"]
     data: AlertData
 

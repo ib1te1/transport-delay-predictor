@@ -29,9 +29,11 @@ class CurrentPredictions:
             self._rows[row.tr_id] = row
 
     def get(self, tr_id: int) -> PredictionRow | None:
+        """The held prediction for a vehicle, or None."""
         return self._rows.get(tr_id)
 
     def discard(self, tr_id: int) -> None:
+        """Remove the held prediction for a vehicle."""
         self._rows.pop(tr_id, None)
 
     def vehicles(self) -> list[int]:
