@@ -47,6 +47,16 @@ class ApiConfig(StrictModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_card_track_fits_the_window(self) -> "ApiConfig":
+        window = self.request.telemetry_window_sec
+        if self.card_track_sec > window:
+            raise ValueError(
+                "expected card_track_sec <= request.telemetry_window_sec, "
+                f"got {self.card_track_sec}, {window}"
+            )
+        return self
+
 
 class SeedConfig(StrictModel):
     period: Literal["train", "test", "validate"] = "test"
