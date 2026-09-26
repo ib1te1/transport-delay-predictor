@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from busdelay.features import FEATURES, Track, build_features, point_features
+from busdelay.features import FEATURES, Track, build_features, estimate_cur_dev, point_features
 from busdelay.schedule import VehiclePlan, prepare_plan
 from world import make_plan, make_track
 
@@ -101,6 +101,17 @@ def test_gps_hint_replaces_the_given_one():
     assert row["cur_dev_s"] == pytest.approx(90, abs=15)
     with pytest.raises(ValueError, match="hint"):
         build_features(points, plan, track, hint="future")
+
+
+def test_cur_dev_estimate_follows_the_bus():
+    plan = make_plan(n_stops=30)
+    track = make_track(plan, np.full(30, 120.0))
+    vehicle = VehiclePlan.from_frame(prepare_plan(plan))
+    T = plan["t_plan"].iloc[12] + 30
+    # stop 12 is planned 30 s ago, the bus is 2 minutes late and has not reached it:
+    # the delay seen at stop 10 is used
+    estimate = estimate_cur_dev(vehicle, Track.from_frame(track).upto(T), T)
+    assert estimate == pytest.approx(120, abs=15)
 
 
 def test_vehicle_without_telemetry_gets_nan_not_an_error():

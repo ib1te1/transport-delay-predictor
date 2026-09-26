@@ -179,6 +179,11 @@ def test_train_and_predict_commands(dataset, tmp_path, capsys):
     assert written["sample_id"].tolist() == validate["sample_id"].tolist()
     np.testing.assert_allclose(written["prediction"], np.round(offline, 1))
 
+    bench_args = ["bench", "--model", str(models / "tiny"), "--data", str(dataset)]
+    assert main([*bench_args, "--moments", "3"]) == 0
+    printed = capsys.readouterr().out
+    assert "one vehicle alone" in printed and "fell back" not in printed
+
     mix_args = [*train_args, "--hint", "mix", "--seeds", "2"]
     mix_args[mix_args.index("tiny")] = "mix"
     assert main(mix_args) == 0

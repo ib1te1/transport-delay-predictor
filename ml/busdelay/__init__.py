@@ -12,7 +12,6 @@ Modules:
 * :mod:`busdelay.model` - CatBoost regressor and "late" classifier
 * :mod:`busdelay.explain` - reasons for the dispatcher from SHAP values
 * :mod:`busdelay.inference` - forecasts for requests that carry their plan and telemetry
-* :mod:`busdelay.online` - live predictor with its own telemetry buffers
 * :mod:`busdelay.submission` - writing and checking submission.csv
 * :mod:`busdelay.cli` - ``python -m busdelay`` commands
 """

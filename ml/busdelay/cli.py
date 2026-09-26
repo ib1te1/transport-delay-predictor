@@ -9,7 +9,7 @@ Commands:
 * ``train`` - cross-validate CatBoost, then fit it on all labeled points and save it
 * ``blend`` - average models trained on the same points into one model
 * ``predict`` - predict validate the way the service does and write a submission
-* ``bench`` - replay validate telemetry through the live predictor and time it
+* ``bench`` - time the service's forecaster on validate telemetry
 * ``outage`` - MAE on test with the last minutes of telemetry cut
 * ``check`` - check a submission file against ``validate/points.csv``
 
@@ -27,14 +27,13 @@ import pandas as pd
 from .arrivals import detect_arrivals
 from .baselines import BASELINES
 from .data import FILES, PARTS, is_synthetic, load_part, read_points
-from .features import build_features, read_feature_table
+from .features import HISTORY_S, build_features, read_feature_table
 from .folds import block_ids, group_folds
-from .inference import Forecaster, queries_for_points
+from .inference import FIX_COLUMNS, Forecaster, Query, queries_for_points
 from .metrics import summary
 from .model import HINTS, DelayModel, TrainConfig, blend, train
-from .online import LivePredictor
 from .outage import KINDS, evaluate, outage_points
-from .schedule import prepare_plan, split_by_vehicle
+from .schedule import VehiclePlan, prepare_plan, split_by_vehicle
 from .submission import check_submission, write_submission
 
 DEFAULT_DATA = Path("../data/dataset")
@@ -296,34 +295,71 @@ def cmd_predict(args) -> int:
     return report_check(path, args.data)
 
 
+def bench_queries(
+    plans: dict[int, VehiclePlan], fixes: dict[int, pd.DataFrame], now: float
+) -> list[Query]:
+    """A query per vehicle that has a stop 10-15 minutes ahead of ``now``, the way the api
+    asks: the plan from the start of the day up to the target, no ``cur_dev_s`` and
+    :data:`busdelay.features.HISTORY_S` of telemetry before ``now``."""
+    empty = pd.DataFrame(columns=FIX_COLUMNS)
+    queries = []
+    for tr_id, plan in plans.items():
+        target = plan.pick_target(now)
+        if target < 0:
+            continue
+        stops = pd.DataFrame(
+            {"stop_id": plan.stop_id, "t_plan": plan.t_plan, "lat": plan.lat, "lon": plan.lon}
+        )
+        track = fixes.get(tr_id, empty)
+        queries.append(
+            Query(
+                sample_id=f"{tr_id}_{now:.0f}",
+                tr_id=tr_id,
+                T=float(now),
+                target_stop_id=int(plan.stop_id[target]),
+                cur_dev_s=np.nan,
+                plan=stops.iloc[: target + 1],
+                fixes=track[(track["t"] >= now - HISTORY_S) & (track["t"] <= now)],
+            )
+        )
+    return queries
+
+
 def cmd_bench(args) -> int:
-    """``bench``: time :class:`busdelay.online.LivePredictor` on validate telemetry."""
-    model = DelayModel.load(args.model)
+    """``bench``: time the service's :class:`busdelay.inference.Forecaster` on validate."""
+    forecaster = Forecaster(DelayModel.load(args.model), hint="gps")
     part = load_part(args.data, "validate")
-    predictor = LivePredictor(model, part.plan)
-    telemetry = part.telemetry.sort_values("t", kind="stable")
+    plans = split_by_vehicle(prepare_plan(part.plan))
+    fixes = {
+        int(tr_id): rows.rename(columns={"ok": "location_valid"})
+        for tr_id, rows in part.telemetry.groupby("tr_id")
+    }
     moments = np.linspace(part.points["T"].min(), part.points["T"].max(), args.moments)
 
-    fixes = telemetry.itertuples(index=False)
-    fix = next(fixes, None)
-    single, cycles, forecasts = [], [], 0
+    single, cycles, forecasts, fallbacks = [], [], 0, 0
     for now in moments:
-        while fix is not None and fix.t <= now:
-            predictor.add_fix(fix.tr_id, fix.t, fix.lat, fix.lon, fix.speed, fix.ok)
-            fix = next(fixes, None)
+        queries = bench_queries(plans, fixes, now)
+        if not queries:
+            continue
         started = time.perf_counter()
-        forecasts += len(predictor.forecast_all(now))
+        answers = forecaster.predict(queries)
         cycles.append((time.perf_counter() - started) * 1000)
-        for tr_id in predictor.plans:
+        forecasts += len(answers)
+        fallbacks += sum(a.fallback is not None for a in answers)
+        for query in queries:
             started = time.perf_counter()
-            if predictor.forecast(tr_id, now) is not None:
-                single.append((time.perf_counter() - started) * 1000)
+            forecaster.predict([query])
+            single.append((time.perf_counter() - started) * 1000)
 
+    if not forecasts:
+        raise ValueError("no vehicle has a stop 10-15 minutes ahead at any moment")
     single, cycles = np.array(single), np.array(cycles)
-    print(f"{len(predictor.plans)} vehicles, {len(moments)} moments, {forecasts} forecasts")
+    print(f"{len(plans)} vehicles, {len(moments)} moments, {forecasts} forecasts")
+    if fallbacks:
+        print(f"{fallbacks} forecasts fell back to cur_dev_s, the timings are too low")
     print(
         f"all vehicles in one call: p50 {np.percentile(cycles, 50):.0f} ms, "
-        f"max {cycles.max():.0f} ms, {cycles.sum() / max(forecasts, 1):.1f} ms per vehicle"
+        f"max {cycles.max():.0f} ms, {cycles.sum() / forecasts:.1f} ms per vehicle"
     )
     print(
         f"one vehicle alone: p50 {np.percentile(single, 50):.0f} ms, "
@@ -485,7 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, default=None, help="default: data/submissions/<name>.csv")
     p.set_defaults(func=cmd_predict)
 
-    p = commands.add_parser("bench", help="time the live predictor on validate telemetry")
+    p = commands.add_parser("bench", help="time the forecaster on validate telemetry")
     p.add_argument("--model", type=Path, required=True)
     p.add_argument("--data", type=Path, default=DEFAULT_DATA)
     p.add_argument("--moments", type=int, default=20)

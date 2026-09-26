@@ -106,8 +106,8 @@ class VehiclePlan:
     def pick_target(self, t: float) -> int:
         """First stop planned in ``(t + 10 min, t + 15 min]``, -1 if there is none.
 
-        This is how the organisers chose ``target_stop_id``; the live predictor uses it to
-        pick the stop to forecast for.
+        This is how the organisers chose ``target_stop_id``; ``bench`` uses it to pick the
+        stop to forecast for.
         """
         first = int(np.searchsorted(self.t_plan, t + LEAD_MIN_S, side="right"))
         if first < len(self) and self.t_plan[first] <= t + LEAD_MAX_S:

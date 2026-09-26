@@ -33,7 +33,7 @@ python -m venv .venv
 | `python -m busdelay blend --name current --model <модели>` | среднее нескольких моделей как одна модель | ~5 с |
 | `python -m busdelay predict --model ../models/submit_v2` | сабмит моделью в `data/submissions/submit_v2.csv`, тем же путём, что сервис | ~3 с |
 | `python -m busdelay check <файл>` | проверка формата сабмита | ~1 с |
-| `python -m busdelay bench --model ../models/current` | задержка онлайн-прогноза на телеметрии validate | ~1 мин |
+| `python -m busdelay bench --model ../models/current` | время прогноза на телеметрии validate, тем же путём, что сервис, без HTTP | ~20 с |
 | `python -m busdelay outage --model ../models/ctl` | MAE на test, когда телеметрия оборвалась за N минут до `T` | ~1 мин |
 
 `features` нужно перезапускать после любого изменения в признаках, остальные
@@ -143,9 +143,6 @@ meta.json       признаки, настройки, метрики CV, инт�
 `outage`: он обрезает телеметрию точек test за N минут до `T` и сравнивает
 модели с двумя прямыми, persistence и нулём. Честные цифры — только у
 моделей, обученных без test (`train --parts train`), например `models/ctl`.
-
-`busdelay.online.LivePredictor` — тот же прогноз с собственными буферами
-телеметрии, на нём работает `bench`.
 
 ## Docker
 
