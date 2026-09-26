@@ -17,9 +17,13 @@ api:
   predict_timeout_ms: 1000
   # Track length shown in the vehicle card.
   card_track_sec: 1800
+  # What the model needs, measured on test (docs/specs/ml-model.md): 150
+  # minutes of telemetry to see the previous loop, and the plan from the
+  # start of the day, where trips are counted from. With 30 minutes and 1
+  # hour the MAE grows by 4 s.
   request:
-    telemetry_window_sec: 1800
-    schedule_back_sec: 3600
+    telemetry_window_sec: 9000
+    schedule_back_sec: 86400
   # Predicted delay, seconds. Inside green: on schedule. Above red_above:
   # red. Everything else, including early by more than green's lower
   # bound, is yellow. Defaults follow the organizers' early/late classes.
@@ -33,5 +37,9 @@ seed:
 
 ingest: {}
 matcher: {}
-predictor: {}
+predictor:
+  # Where cur_dev_s comes from. gps: estimated from the request's telemetry,
+  # the way the model saw it in training; the value sent by the api fills in
+  # only when the estimate fails. request: as sent.
+  cur_dev_source: gps
 replay: {}
