@@ -1,4 +1,6 @@
 import asyncio
+import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
@@ -25,8 +27,44 @@ from common.db import make_pool
 CARD_DB_TIMEOUT_SEC = 2.0
 
 
+class _AppLogHandler(logging.Handler):
+    """Writes formatted records to ``sys.stderr`` as it is at emit time.
+
+    A plain ``logging.StreamHandler()`` freezes the stream object at
+    construction; pytest swaps ``sys.stderr`` for each test's capture, so a
+    handler built earlier would then write to an already-closed stream.
+    Reading ``sys.stderr`` inside ``emit`` instead keeps it always current.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            sys.stderr.write(self.format(record) + "\n")
+        except Exception:
+            self.handleError(record)
+
+
+def configure_logging() -> None:
+    """Give the ``app`` logger a level and a formatted handler.
+
+    uvicorn configures only its own loggers (``uvicorn``, ``uvicorn.error``,
+    ``uvicorn.access``), which do not propagate to the root, so ``app.*``
+    records would otherwise reach Python's last-resort handler and print as
+    a bare message with no level or logger name. The root logger is left
+    alone: raising its level to INFO would also print httpx's INFO line for
+    every predictor request. Idempotent: a second call does not add a
+    second handler.
+    """
+    logger = logging.getLogger("app")
+    if not any(isinstance(handler, _AppLogHandler) for handler in logger.handlers):
+        handler = _AppLogHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    configure_logging()
     settings = ServiceSettings()
     config = load_section(settings.config_path, "api", ApiConfig)
     app.state.hub = Hub()
