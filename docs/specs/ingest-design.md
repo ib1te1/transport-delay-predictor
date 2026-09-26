@@ -198,6 +198,7 @@ Redis Stream ограничен общей длиной из `common.bus`; Postg
 | `location_valid` | `boolean not null` | достоверность координат |
 | `speed_kmh`, `heading_deg` | `double precision null` | скорость и курс |
 | `source` | `text not null` | значение из `TelemetryRecord.source` |
+| `created_at` | `timestamptz not null` | время записи для оценки возраста outbox |
 | `published_at` | `timestamptz null` | `NULL` до успешного `XADD` |
 | `stream_id` | `text null` | ID Redis Stream для диагностики |
 
