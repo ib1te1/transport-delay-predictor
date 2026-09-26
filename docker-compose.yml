@@ -89,6 +89,23 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Clears the run: every table but seed's reference data, and Redis.
+  # Opt-in and never on its own: api and matcher keep state in memory,
+  # so scripts/reset-demo stops them around it.
+  reset:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    command: ["python", "-m", "app.reset"]
+    profiles: ["reset"]
+    environment: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   ingest:
     <<: *backend
     image: transport-delay-predictor-ingest:local

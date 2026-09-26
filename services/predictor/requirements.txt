@@ -10,3 +10,6 @@ psycopg-pool==3.3.2
 pydantic-settings==2.15.0
 pyyaml==6.0.3
 catboost==1.2.10
+# busdelay (ml/) imports these directly; the same pins as ml/requirements.txt
+numpy==2.5.3
+pandas==3.0.6

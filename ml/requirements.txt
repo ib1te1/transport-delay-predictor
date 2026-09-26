@@ -1,0 +1,5 @@
+# Exact versions, checked inside python:3.13-slim.
+catboost==1.2.10
+pandas==3.0.6
+numpy==2.5.3
+pyarrow==25.0.1

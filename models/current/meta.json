@@ -1,0 +1,323 @@
+{
+  "created": "2026-09-26T07:37:51+00:00",
+  "blend": {
+    "weights": [
+      0.5,
+      0.5
+    ],
+    "members": [
+      {
+        "iterations": 3000,
+        "depth": 4,
+        "learning_rate": 0.03,
+        "l2_leaf_reg": 30.0,
+        "residual": true,
+        "vehicle": false,
+        "synthetic_weight": 1.0,
+        "classifier": true,
+        "folds": 5,
+        "group": "runs",
+        "seed": 0,
+        "seeds": 5,
+        "hint": "mix",
+        "threads": -1,
+        "gpu": false
+      },
+      {
+        "iterations": 3000,
+        "depth": 6,
+        "learning_rate": 0.03,
+        "l2_leaf_reg": 3.0,
+        "residual": false,
+        "vehicle": false,
+        "synthetic_weight": 1.0,
+        "classifier": true,
+        "folds": 5,
+        "group": "runs",
+        "seed": 0,
+        "seeds": 5,
+        "hint": "mix",
+        "threads": -1,
+        "gpu": false
+      }
+    ],
+    "names": [
+      "current_resid",
+      "current_plain"
+    ]
+  },
+  "metrics": {
+    "cv": {
+      "persistence": {
+        "mae": 88.37884872824633,
+        "bias": 7.246318607764391,
+        "p90": 194.0,
+        "vs_persistence": 0.0,
+        "score": 0.2071833145012127,
+        "rows": 1494
+      },
+      "split_linear": {
+        "mae": 74.39790495314591,
+        "bias": -17.09514725568942,
+        "p90": 164.394,
+        "vs_persistence": -0.1581933231342494,
+        "score": 0.8335471438750033,
+        "rows": 1494
+      },
+      "model": {
+        "mae": 68.1039844840118,
+        "bias": -6.746297857642749,
+        "p90": 152.35820150638781,
+        "vs_persistence": -0.2294085579975944,
+        "score": 1.115522680736971,
+        "rows": 1494
+      },
+      "model / layover": {
+        "mae": 57.11097326049028,
+        "bias": -4.276272739641196,
+        "p90": 115.6465427612192,
+        "vs_persistence": -0.5563245425876482,
+        "score": 0.7471081437163384,
+        "rows": 299
+      },
+      "model / no layover": {
+        "mae": 70.85453708303518,
+        "bias": -7.364320878799623,
+        "p90": 159.8389104713033,
+        "vs_persistence": -0.0949099752621374,
+        "score": 1.1804084202984086,
+        "rows": 1195
+      },
+      "persistence, cur_dev from GPS": {
+        "mae": 128.78447121820616,
+        "bias": 40.659973226238286,
+        "p90": 285.0,
+        "vs_persistence": 0.0,
+        "score": -1.6030392883617495,
+        "rows": 1494
+      },
+      "split_linear, cur_dev from GPS": {
+        "mae": 87.2146653279786,
+        "bias": -12.402911646586343,
+        "p90": 197.0875,
+        "vs_persistence": -0.32278585684289296,
+        "score": 0.2593401920636403,
+        "rows": 1494
+      },
+      "model, cur_dev from GPS": {
+        "mae": 73.38868228723535,
+        "bias": -5.79553288492608,
+        "p90": 166.2466066709504,
+        "vs_persistence": -0.43014338923759576,
+        "score": 0.8787615860385132,
+        "rows": 1494
+      },
+      "model / layover, cur_dev from GPS": {
+        "mae": 57.030459490210056,
+        "bias": -3.587776791744649,
+        "p90": 116.33455580958645,
+        "vs_persistence": -0.7547800139841122,
+        "score": 0.751928960691753,
+        "rows": 299
+      },
+      "model / no layover, cur_dev from GPS": {
+        "mae": 77.48166020883416,
+        "bias": -6.3479337818811,
+        "p90": 175.1323690963776,
+        "vs_persistence": -0.24641004061695815,
+        "score": 0.9010995446942605,
+        "rows": 1195
+      }
+    },
+    "serving_hint": "gps",
+    "control": {
+      "persistence": {
+        "mae": 93.35977337110482,
+        "bias": 7.597733711048159,
+        "p90": 195.0,
+        "vs_persistence": 0.0,
+        "score": 0.4022972750699051,
+        "rows": 353
+      },
+      "model": {
+        "mae": 72.9211201033011,
+        "bias": -11.480770591820352,
+        "p90": 152.58752217528192,
+        "vs_persistence": -0.21892355272286412,
+        "score": 1.2264063960394747,
+        "rows": 353
+      },
+      "persistence, cur_dev from GPS": {
+        "mae": 143.6628895184136,
+        "bias": 51.54390934844193,
+        "p90": 329.4000000000001,
+        "vs_persistence": 0.0,
+        "score": -1.6259800427655025,
+        "rows": 353
+      },
+      "model, cur_dev from GPS": {
+        "mae": 78.98309917596936,
+        "bias": -13.150084784289364,
+        "p90": 171.8438260114771,
+        "vs_persistence": -0.4502191941096527,
+        "score": 0.9819806905169803,
+        "rows": 353
+      }
+    },
+    "late": {
+      "auc": 0.799820363055719,
+      "logloss": 0.4244936881041762,
+      "brier": 0.1354448578805018,
+      "positive_rate": 0.2182061579651941,
+      "rows": 1494
+    }
+  },
+  "versions": {
+    "busdelay": "0.2.0",
+    "python": "3.13.0",
+    "catboost": "1.2.10"
+  },
+  "importance": [
+    [
+      "hour",
+      8.56
+    ],
+    [
+      "cur_dev_s",
+      6.42
+    ],
+    [
+      "prev_loop_dev_s",
+      6.3
+    ],
+    [
+      "target_lon",
+      5.5
+    ],
+    [
+      "target_lat",
+      5.3
+    ],
+    [
+      "ok_share_15m",
+      4.42
+    ],
+    [
+      "target_trip_frac",
+      4.0
+    ],
+    [
+      "eta_dev_s",
+      3.78
+    ],
+    [
+      "prev_loop_gain_s",
+      3.7
+    ],
+    [
+      "stops_ahead",
+      2.96
+    ],
+    [
+      "gps_stops_ahead",
+      2.8
+    ],
+    [
+      "prev_loop_age_s",
+      2.74
+    ],
+    [
+      "dwell_mean3_s",
+      2.73
+    ],
+    [
+      "plan_dist_ahead_m",
+      2.46
+    ],
+    [
+      "dist_to_target_m",
+      2.45
+    ],
+    [
+      "gps_dev_mean3_s",
+      2.43
+    ],
+    [
+      "stopped_share_10m",
+      2.42
+    ],
+    [
+      "gps_dev_last_s",
+      2.12
+    ],
+    [
+      "last_trip_frac",
+      2.05
+    ],
+    [
+      "trip_stops",
+      1.92
+    ]
+  ],
+  "columns": [
+    "lead_s",
+    "hour",
+    "since_last_plan_s",
+    "stops_ahead",
+    "plan_dist_ahead_m",
+    "plan_run_s",
+    "layover_ahead_s",
+    "new_trip_ahead",
+    "last_trip_frac",
+    "target_seq",
+    "target_trip_frac",
+    "trip_stops",
+    "trip_no",
+    "target_lat",
+    "target_lon",
+    "cur_dev_s",
+    "layover_slack_s",
+    "tel_age_s",
+    "fixes_15m",
+    "ok_share_15m",
+    "speed_mean_5m",
+    "speed_mean_15m",
+    "speed_max_5m",
+    "stopped_share_10m",
+    "standing_s",
+    "dist_to_target_m",
+    "route_offset_m",
+    "gps_dist_ahead_m",
+    "gps_stops_ahead",
+    "eta_dev_s",
+    "gps_dev_last_s",
+    "gps_dev_age_s",
+    "gps_dev_mean3_s",
+    "gps_dev_trend_s",
+    "gps_overdue_s",
+    "gps_dev_now_s",
+    "gps_minus_cur_s",
+    "gps_found_share",
+    "dwell_last_s",
+    "dwell_mean3_s",
+    "prev_loop_dev_s",
+    "prev_loop_age_s",
+    "prev_loop_gain_s"
+  ],
+  "lines": {
+    "regular": [
+      0.6100000000000001,
+      1.2200000000000002
+    ],
+    "after_layover": [
+      0.020000000000000018,
+      20.0
+    ]
+  },
+  "interval": [
+    -105.47034677221681,
+    125.55604792140511
+  ],
+  "baseline_weight": 0.5,
+  "has_classifier": true
+}

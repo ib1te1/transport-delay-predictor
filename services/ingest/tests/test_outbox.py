@@ -1,12 +1,11 @@
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from redis.asyncio import Redis
 
 from app.outbox import Outbox
-from app.store import pending_count, save_telemetry, start_replay_run
+from app.store import pending_count, save_telemetry
 from common.db import connect, make_pool
 from contracts import TelemetryRecord
 
@@ -22,15 +21,11 @@ async def test_saved_point_reaches_redis_after_a_temporary_outage(
 ) -> None:
     stream = f"test-ingest-{uuid4()}"
     with connect(database_url) as conn:
-        run = start_replay_run(
-            conn,
-            period="test",
-            file_path=Path("/data/test/traffic.csv"),
-            file_sha256=str(uuid4()),
-            start_at=None,
-            end_at=None,
-            speedup=60,
-            new_run=True,
+        run_id = uuid4()
+        conn.execute(
+            "INSERT INTO ingest_runs (run_id, mode, period, status)"
+            " VALUES (%s, 'replay', 'test', 'active')",
+            (run_id,),
         )
         record = TelemetryRecord(
             tr_id=None,
@@ -43,7 +38,7 @@ async def test_saved_point_reaches_redis_after_a_temporary_outage(
             heading_deg=None,
             source="replay",
         )
-        save_telemetry(conn, run.run_id, "2", record)
+        save_telemetry(conn, run_id, "2", record)
     pool = make_pool(database_url)
     redis = Redis.from_url(redis_url)
     try:
@@ -60,5 +55,5 @@ async def test_saved_point_reaches_redis_after_a_temporary_outage(
         await redis.delete(stream)
         await redis.aclose()
         with connect(database_url) as conn:
-            conn.execute("DELETE FROM telemetry WHERE run_id = %s", (run.run_id,))
-            conn.execute("DELETE FROM ingest_runs WHERE run_id = %s", (run.run_id,))
+            conn.execute("DELETE FROM telemetry WHERE run_id = %s", (run_id,))
+            conn.execute("DELETE FROM ingest_runs WHERE run_id = %s", (run_id,))

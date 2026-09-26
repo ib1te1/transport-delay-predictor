@@ -5,6 +5,7 @@ import psycopg
 import pytest
 
 from app.store import (
+    ReplayCompleted,
     advance_replay_cursor,
     is_published,
     mark_published,
@@ -33,6 +34,17 @@ def point() -> TelemetryRecord:
         heading_deg=None,
         source="replay",
     )
+
+
+def replay_run(sha: str) -> dict:
+    return {
+        "period": "test",
+        "file_path": Path("/data/test/traffic.csv"),
+        "file_sha256": sha,
+        "start_at": None,
+        "end_at": None,
+        "speedup": 60,
+    }
 
 
 def test_replay_cursor_and_outbox_survive_a_duplicate_input(db_conn: psycopg.Connection) -> None:
@@ -87,7 +99,7 @@ def test_replay_cannot_resume_with_another_file(db_conn: psycopg.Connection) -> 
         end_at=None,
         speedup=60,
     )
-    with pytest.raises(ValueError, match="file or settings changed"):
+    with pytest.raises(ValueError, match="file or settings changed.*reset-demo"):
         start_replay_run(
             db_conn,
             period="test",
@@ -97,3 +109,24 @@ def test_replay_cannot_resume_with_another_file(db_conn: psycopg.Connection) -> 
             end_at=None,
             speedup=60,
         )
+
+
+def test_completed_replay_is_not_restarted(db_conn: psycopg.Connection) -> None:
+    run = start_replay_run(db_conn, **replay_run("done"))
+    set_run_status(db_conn, run.run_id, "completed")
+    with pytest.raises(ReplayCompleted) as caught:
+        start_replay_run(db_conn, **replay_run("done"))
+    assert caught.value.run_id == run.run_id
+    count = db_conn.execute(
+        "SELECT count(*) FROM ingest_runs WHERE mode = 'replay' AND file_sha256 = 'done'"
+    ).fetchone()
+    assert count == (1,)
+
+
+def test_run_left_active_by_a_killed_process_is_resumed(db_conn: psycopg.Connection) -> None:
+    run = start_replay_run(db_conn, **replay_run("killed"))
+    advance_replay_cursor(db_conn, run.run_id, T, 5)
+    resumed = start_replay_run(db_conn, **replay_run("killed"))
+    assert resumed.run_id == run.run_id
+    assert resumed.status == "active"
+    assert resumed.cursor == (T, 5)

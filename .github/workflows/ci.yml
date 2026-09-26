@@ -27,6 +27,7 @@ jobs:
     outputs:
       tests: ${{ steps.select.outputs.tests }}
       web: ${{ steps.select.outputs.web }}
+      ml: ${{ steps.select.outputs.ml }}
       ingest: ${{ steps.select.outputs.ingest }}
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +60,7 @@ jobs:
             {"name": "api", "dir": "services/api", "requirements": "services/api/requirements.txt", "paths": "^services/api/"},
             {"name": "ingest", "dir": "services/ingest", "requirements": "services/ingest/requirements.txt", "paths": "^services/ingest/"},
             {"name": "matcher", "dir": "services/matcher", "requirements": "services/matcher/requirements.txt", "paths": "^services/matcher/"},
-            {"name": "predictor", "dir": "services/predictor", "requirements": "services/predictor/requirements.txt", "paths": "^services/predictor/"},
+            {"name": "predictor", "dir": "services/predictor", "requirements": "services/predictor/requirements.txt", "packages": "-e ml", "paths": "^(services/predictor/|ml/busdelay/|ml/pyproject[.]toml$|models/current/)"},
             {"name": "common", "dir": "packages/common", "requirements": "services/api/requirements.txt", "check_migrations": true, "paths": "^services/api/requirements[.]txt$"},
             {"name": "contracts", "dir": "packages/contracts", "requirements": "services/api/requirements.txt", "paths": "^packages/contracts/"}
           ]'
@@ -77,6 +78,12 @@ jobs:
           else
             web=false
           fi
+          # The model depends on nothing shared but the dev requirements.
+          if $all || printf '%s\n' "$files" | grep -Eq '^(ml/|requirements-dev\.txt$|pyproject\.toml$|\.github/workflows/)'; then
+            ml=true
+          else
+            ml=false
+          fi
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
           if $all || printf '%s\n' "$files" | grep -Eq '^(services/ingest/|migrations/|packages/|config/)'; then
@@ -84,9 +91,11 @@ jobs:
           else
             ingest=false
           fi
+          echo "ml=$ml" >> "$GITHUB_OUTPUT"
           echo "ingest=$ingest" >> "$GITHUB_OUTPUT"
           echo "tests=$tests"
           echo "web=$web"
+          echo "ml=$ml"
           echo "ingest=$ingest"
 
   lint:
@@ -163,7 +172,8 @@ jobs:
             migrations/requirements.txt
             requirements-dev.txt
       - run: pip install -r ${{ matrix.requirements }} -r migrations/requirements.txt -r requirements-dev.txt
-      - run: pip install --no-deps -e packages/contracts -e packages/common
+      # packages: the delay model for predictor; the others do not have its pins
+      - run: pip install --no-deps -e packages/contracts -e packages/common ${{ matrix.packages }}
       - run: pip check
       - name: Single migration head
         if: matrix.check_migrations
@@ -177,6 +187,25 @@ jobs:
       - run: pytest
         working-directory: ${{ matrix.dir }}
 
+  ml:
+    needs: changes
+    if: needs.changes.outputs.ml == 'true'
+    runs-on: ubuntu-latest
+    # separate job: the model tests need no Postgres, Redis or migrations
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            ml/requirements.txt
+            requirements-dev.txt
+      - run: pip install -r ml/requirements.txt -r requirements-dev.txt
+      - run: pip check
+      - run: pytest
+        working-directory: ml
+
   ingest-image:
     needs: changes
     if: needs.changes.outputs.ingest == 'true'
@@ -186,13 +215,15 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose --profile replay --profile emulator config -q
       - name: Prepare replay smoke data
+        # Files of the demo period, seed.period and replay.period in
+        # config/system.yaml.
         run: |
-          mkdir -p data/dataset/test
-          cat > data/dataset/test/schedule.csv <<'CSV'
+          mkdir -p data/dataset/validate
+          cat > data/dataset/validate/schedule_plan.csv <<'CSV'
           tt_action_item_id,tr_id,geom,time_begin
           1,2,POINT (38 55),2026-01-06 00:00:01
           CSV
-          cat > data/dataset/test/traffic.csv <<'CSV'
+          cat > data/dataset/validate/traffic.csv <<'CSV'
           unit_id,tr_id,event_time,location_valid,lat,lon,speed,heading
           1,2,2026-01-06 00:00:03,True,55,38,20,90
           1,2,2026-01-06 00:00:01,True,55,38,20,90
@@ -211,6 +242,20 @@ jobs:
           run=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
             "SELECT status FROM ingest_runs WHERE mode = 'replay'")
           test "$run" = completed
+      - name: Re-running a completed replay publishes nothing
+        run: |
+          code=0
+          out=$(docker compose --profile replay run --rm replay 2>&1) || code=$?
+          printf '%s\n' "$out"
+          test "$code" -eq 3
+          grep -q 'scripts/reset-demo' <<<"$out"
+          rows=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
+            "SELECT count(*), count(*) FILTER (WHERE published_at IS NULL), string_agg(source_key, ',' ORDER BY id) FROM telemetry")
+          test "$rows" = '3|0|3,4,2'
+          test "$(docker compose exec -T redis redis-cli XLEN telemetry | tr -d '\r')" = 3
+          runs=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
+            "SELECT count(*), string_agg(status, ',') FROM ingest_runs WHERE mode = 'replay'")
+          test "$runs" = '1|completed'
       - if: failure()
         run: docker compose --profile replay logs --no-color postgres redis migrate seed ingest replay
       - if: always()

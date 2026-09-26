@@ -34,6 +34,10 @@ PERIOD_FILES = {
     "validate": ("validate/schedule_plan.csv", "validate/traffic.csv"),
 }
 
+# The reference tables this loader owns. The demo reset keeps them, so a
+# new one belongs here, not only in run_seed.
+SEED_TABLES = ("stops_plan", "vehicles")
+
 _POINT = re.compile(r"^\s*POINT\s*\(\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)\s*$")
 
 
