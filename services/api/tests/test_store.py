@@ -51,6 +51,19 @@ def test_save_predictions_returns_only_the_rows_actually_inserted(db_conn) -> No
     assert saved == [fresh]
 
 
+def test_save_predictions_returns_only_the_first_row_of_a_repeated_sample_id(db_conn) -> None:
+    first = prediction_row(sample_id="store-test-4", prediction_s=10.0)
+    second = first.model_copy(update={"prediction_s": 99.0})
+
+    saved = save_predictions(db_conn, [first, second])
+
+    assert saved == [first]
+    stored = fetch_models(
+        db_conn, PredictionRow, "SELECT * FROM predictions WHERE sample_id = %s", ("store-test-4",)
+    )
+    assert stored == [first]
+
+
 def test_save_predictions_with_no_rows_is_a_no_op(db_conn) -> None:
     assert save_predictions(db_conn, []) == []
 
