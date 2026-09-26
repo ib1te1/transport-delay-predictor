@@ -1,23 +1,39 @@
 # Матчер
 
-Матчер читает опубликованную телеметрию из Postgres, сопоставляет её с
+Матчер читает телеметрию из Redis Stream `telemetry`, сопоставляет её с
 `stops_plan`, сохраняет состояние и пишет события в Redis Stream
 `stop_events` по общему контракту `StopEvent`. Детали алгоритма и границы
 решения — в [спецификации](../../docs/specs/matcher-design.md).
 
 После `docker compose up --build` проверьте
 `http://127.0.0.1:8002/ready`: ответ `ready` означает доступность БД,
-Redis и обоих фоновых обработчиков. `GET /quality` показывает позицию
-обработки, число плановых посещений и событий, остаток очереди отправки.
+Redis и обоих фоновых обработчиков; `input_failing` — чтение телеметрии
+падает и повторяется, причина в `docker compose logs matcher`.
 Демо-телеметрию запускает профиль `replay` у ингеста.
+
+`GET /quality`:
+
+- `stream_cursor` — id последней обработанной записи потока (`0-0` —
+  ещё ничего), `stream_last_id` — последняя запись в потоке;
+- `lag_ms` — на сколько миллисекунд (по времени добавления в поток)
+  обработанная запись старше последней;
+- `planned_visits`, `stop_events`, `outbox_pending` — плановые посещения,
+  найденные события и события, ещё не отправленные в Redis;
+- `rejected_late_ticks` и `skipped` (`malformed`, `unknown_vehicle`,
+  `unplanned`, `invalid_location`) — отброшенные точки с момента запуска.
+
+Пороги детектора лежат в `config/assumptions.yaml` и сохраняются вместе с
+позицией. Если их изменить после обработки телеметрии, матчер не
+стартует: контейнер в состоянии `Exited`, в `docker compose logs matcher`
+видно сохранённые и заданные значения. Верните прежние значения или
+начните демо заново: `scripts/reset-demo.sh` (`scripts/reset-demo.ps1`).
+Новый прогон тоже начинается только через этот скрипт.
 
 Для проверки в локальном окружении с Python 3.13 установите зависимости
 из `services/matcher/requirements.txt`, `migrations/requirements.txt` и
-`requirements-dev.txt`, а общие пакеты — editable. Затем примените миграции
-`alembic -c migrations/alembic.ini upgrade head` и из `services/matcher`
-выполните `pytest`. При `REQUIRE_INFRA=1` должны быть заданы
-`DATABASE_URL` и `REDIS_URL`, иначе инфраструктурные тесты завершатся
-ошибкой. Тесты используют временные схемы Postgres и отдельный stream Redis.
-
-Пороги детектора лежат в `config/assumptions.yaml`; изменение порогов после
-обработки телеметрии требует нового воспроизведения данных.
+`requirements-dev.txt`, а общие пакеты — editable. Тестам нужны Postgres с
+применёнными миграциями (`alembic -c migrations/alembic.ini upgrade head`)
+и Redis: задайте `DATABASE_URL` и `REDIS_URL` и из `services/matcher`
+выполните `pytest`. При `REQUIRE_INFRA=1` без этих переменных
+инфраструктурные тесты завершатся ошибкой. Тесты используют временные
+схемы Postgres и отдельные потоки Redis.
