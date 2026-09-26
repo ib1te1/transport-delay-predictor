@@ -20,7 +20,8 @@ extend-exclude = ["*.md"]
 select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
-# Service packages sit at services/<name>/app and the shared ones under
-# packages/*/src, not at the root, so ruff would otherwise sort them in
-# with the third-party imports.
-known-first-party = ["app", "common", "contracts"]
+# Service packages sit at services/<name>/app, the shared ones under
+# packages/*/src and the model at ml/busdelay, not at the root,
+# so ruff would otherwise sort them in with the third-party imports.
+# "world" is the fake dataset helper in ml/tests.
+known-first-party = ["app", "common", "contracts", "busdelay", "world"]

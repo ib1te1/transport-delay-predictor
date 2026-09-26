@@ -32,7 +32,10 @@
 | hatchling | 1.32.4 | сборка пакетов `packages/*` | MIT |
 | Alembic | 1.20.0 | исполнитель SQL-миграций | MIT |
 | SQLAlchemy | 2.0.54 | соединение с базой под Alembic | MIT |
-| CatBoost | 1.2.10 | регрессия отклонения и классификатор срыва | Apache-2.0 |
+| CatBoost | 1.2.10 | модель задержки (`ml/busdelay`) | Apache-2.0 |
+| pandas | 3.0.6 | чтение данных и признаки в `ml/busdelay` | BSD-3-Clause |
+| numpy | 2.5.3 | признаки и метрики в `ml/busdelay` | BSD-3-Clause |
+| pyarrow | 25.0.1 | таблицы признаков в parquet | Apache-2.0 |
 | PostgreSQL | 16 | хранилище событий, лейблов и прогнозов | PostgreSQL License |
 | Redis | 7.2.x | шина между сервисами (Streams) и рассылка на дашборд | BSD-3-Clause |
 | ruff | 0.16.8 | линтер | MIT |
@@ -45,13 +48,15 @@
 | MapLibre GL JS | 4.7.1 | карта | BSD-3-Clause |
 
 **Что попадает в таблицу.** Прямые зависимости — закреплённые в
-`services/*/requirements.txt`, `migrations/requirements.txt`,
+`services/*/requirements.txt`, `ml/requirements.txt`, `migrations/requirements.txt`,
 `requirements-dev.txt`, `packages/*/pyproject.toml` и `web/package.json`.
 Транзитивные приходят вместе с ними и отдельными строками не дублируются:
 starlette за FastAPI; python-dotenv за pydantic-settings; Mako и
-greenlet за Alembic и SQLAlchemy; numpy,
-pandas, scipy, matplotlib и plotly за CatBoost; `react-dom`, `@types/react`
-и `@vitejs/plugin-react` за React, TypeScript и Vite. anyio — исключение:
+greenlet за Alembic и SQLAlchemy; scipy, matplotlib и plotly за CatBoost;
+`react-dom`, `@types/react` и `@vitejs/plugin-react` за React, TypeScript и
+Vite. numpy и pandas приходят с CatBoost, но `ml/busdelay` импортирует их
+напрямую и закрепляет в `ml/requirements.txt`, поэтому у них свои строки.
+anyio — исключение:
 он и раньше приходил транзитивно вместе с FastAPI, но теперь ещё и
 закреплён напрямую в `requirements-dev.txt`, потому что от него зависят
 асинхронные тесты (`@pytest.mark.anyio`), а транзитивного присутствия для
@@ -69,6 +74,11 @@ pandas, scipy, matplotlib и plotly за CatBoost; `react-dom`, `@types/react`
 который его вызовет, ещё не написан, и выбор принадлежит треку «Бэкенд».
 Когда дойдёт до него — либо обе строки станут одной, либо здесь останется
 объяснение, почему нет.
+
+**Про numpy.** В метаданных пакета лицензия записана составной:
+`BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0` — сам numpy под
+BSD-3-Clause, остальные покрывают вендоренный внутри код. В таблице
+указана лицензия самого пакета.
 
 **Про psycopg и psycopg-pool.** Единственные зависимости под
 копилефт-лицензией, LGPL-3.0, обе из проекта psycopg. Используются как
@@ -93,7 +103,7 @@ compose, ни отсюда.
 
 | Материал | Назначение | Лицензия | Ссылка |
 | --- | --- | --- | --- |
-| | | | |
+| Датасет хакатона «Предиктор задержек транспорта» | обучение и сабмит | выдан организаторами для хакатона | https://disk.yandex.ru/d/CA6tsj4aJJ4Aaw |
 
 Сюда попадают данные от организаторов (если их использование оговорено
 отдельно), подложка карты и всё, что подключается в рантайме: погода,
