@@ -1,14 +1,19 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 
 import pytest
+from factories import at, plan_stop, prediction_row, telemetry_record
 from fastapi.testclient import TestClient
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-import app.main as main_module
 import app.ws as ws_module
+from app.dashboard import Dashboard
+from app.live import LiveState
 from app.main import app
+from app.schemas import WS_MESSAGE, PredictionMessage
+from app.state import FleetState
 from app.ws import Hub, relay
 from common.bus import DASHBOARD_CHANNEL, BusMessage, publish
 from common.testing import subscriber_count, wait_for_subscribers
@@ -116,21 +121,6 @@ async def test_relay_resets_backoff_after_a_delivered_message(
     assert socket.sent == [message.model_dump_json()]
 
 
-@pytest.fixture
-def no_prediction_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the background prediction loop with a no-op that waits for cancellation.
-
-    Without this, entering the lifespan runs the real loop against the
-    shared dev Redis and Postgres, scoring against the default streams
-    instead of the unique ones tests are supposed to use.
-    """
-
-    async def wait_until_cancelled(*args, **kwargs) -> None:
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(main_module, "run_prediction_loop", wait_until_cancelled)
-
-
 # database_url is not used directly: TestClient(app) runs the lifespan,
 # which builds ServiceSettings, where database_url is required. Drop the
 # marker and the test fails on a validation error instead of skipping.
@@ -157,3 +147,30 @@ def test_ws_discards_client_on_disconnect() -> None:
         with client.websocket_connect("/ws"):
             assert len(client.app.state.hub) == 1
         assert len(client.app.state.hub) == 0
+
+
+# Same reason as above: database_url is required by the lifespan's settings.
+@pytest.mark.usefixtures("database_url", "no_prediction_loop")
+@pytest.mark.timeout(30)
+def test_ws_delivers_dashboard_predictions_through_redis(redis_url: str) -> None:
+    fleet = FleetState(timedelta(seconds=1800))
+    fleet.add_telemetry(telemetry_record(7, at(0)))
+    live = LiveState(fleet, {7: [plan_stop(7, 20, at(720), address="Lenina 1")]})
+    row = prediction_row(sample_id="ws-1", tr_id=7, target_stop_id=20, risk_level="red")
+
+    with Redis.from_url(redis_url) as redis:
+        before = subscriber_count(redis, DASHBOARD_CHANNEL)
+        with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+            wait_for_subscribers(redis, DASHBOARD_CHANNEL, before + 1)
+            dashboard: Dashboard = client.app.state.dashboard
+            dashboard.attach(live)
+            # The dashboard belongs to the app's event loop, run by TestClient's portal.
+            client.portal.call(dashboard.publish_predictions, [row])
+
+            message = WS_MESSAGE.validate_json(websocket.receive_text())
+
+    assert isinstance(message, PredictionMessage)
+    assert (message.data.seq, message.data.tr_id) == (1, 7)
+    assert message.data.prediction.sample_id == "ws-1"
+    assert message.data.prediction.target_address == "Lenina 1"
+    assert message.data.prediction.risk_level == "red"

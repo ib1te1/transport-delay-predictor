@@ -1,3 +1,5 @@
+import logging
+from collections.abc import Callable
 from datetime import timedelta
 
 import pytest
@@ -15,6 +17,8 @@ T = at(3600)
 SEC = timedelta(seconds=1)
 TARGET = plan_stop(7, 1, T + timedelta(minutes=12))
 PLAN = {7: [TARGET]}
+TARGET_OTHER = plan_stop(8, 1, T + timedelta(minutes=12))
+PLAN_TWO_VEHICLES = {7: [TARGET], 8: [TARGET_OTHER]}
 
 
 def state_at_t(*, last_seen=T, since=T - 1800 * SEC, with_stop_event: bool = True) -> FleetState:
@@ -30,14 +34,18 @@ def state_at_t(*, last_seen=T, since=T - 1800 * SEC, with_stop_event: bool = Tru
 
 
 class Sink:
-    def __init__(self) -> None:
+    def __init__(
+        self, keep: Callable[[list[PredictionRow]], list[PredictionRow]] | None = None
+    ) -> None:
         self.events: list[str] = []
         self.saved: list[PredictionRow] = []
         self.published: list[PredictionRow] = []
+        self._keep = keep if keep is not None else (lambda rows: rows)
 
-    async def save(self, rows: list[PredictionRow]) -> None:
+    async def save(self, rows: list[PredictionRow]) -> list[PredictionRow]:
         self.events.append("save")
         self.saved.extend(rows)
+        return self._keep(rows)
 
     async def publish(self, rows: list[PredictionRow]) -> None:
         self.events.append("publish")
@@ -91,6 +99,40 @@ async def test_tick_saves_the_model_answer_then_publishes_it() -> None:
     assert (row.actual_delay_s, row.abs_error_s) == (None, None)
     assert sink.events == ["save", "publish"]
     assert sink.saved == sink.published == [row]
+
+
+@pytest.mark.anyio
+async def test_tick_publishes_only_the_rows_save_returned(caplog: pytest.LogCaptureFixture) -> None:
+    state = state_at_t()
+    state.add_telemetry(telemetry_record(8, T))
+    sink = Sink(keep=lambda rows: [r for r in rows if r.tr_id == 8])
+    caplog.set_level(logging.INFO, logger="app.scoring")
+
+    rows = await run_tick(
+        T,
+        state,
+        PLAN_TWO_VEHICLES,
+        CONFIG,
+        predict=model(30.0),
+        save=sink.save,
+        publish=sink.publish,
+    )
+
+    assert {r.tr_id for r in rows} == {7, 8}
+    assert sink.events == ["save", "publish"]
+    assert [r.tr_id for r in sink.published] == [8]
+    assert "1 prediction row(s) already stored; not published again" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_tick_does_not_publish_when_save_returns_no_rows() -> None:
+    sink = Sink(keep=lambda rows: [])
+
+    rows = await tick(state_at_t(), model(30.0), sink)
+
+    assert len(rows) == 1
+    assert sink.events == ["save"]
+    assert sink.published == []
 
 
 @pytest.mark.anyio
