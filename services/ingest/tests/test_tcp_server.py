@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import struct
 
 import pytest
@@ -56,3 +57,36 @@ async def test_connection_accepts_handshake_then_realtime_and_closes_cleanly() -
     assert saved[0][1].tr_id == 115106
     assert saved[0][1].lat == 55.7551234
     assert writer.closed
+
+
+TAIL = frame(
+    1, 101, bytes([0, 0]) + NAV + bytes([8, 0]) + bytes(6) + bytes([99, 0]) + b"\x01\x02\x03"
+)
+
+
+@pytest.mark.anyio
+async def test_unknown_trailing_cell_keeps_the_point_and_is_logged_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    reader = asyncio.StreamReader()
+    reader.feed_data(HANDSHAKE + TAIL + TAIL)
+    reader.feed_eof()
+    saved: list[tuple[str, TelemetryRecord]] = []
+
+    async def shift_for(_timestamp: int) -> float:
+        return 0
+
+    async def save(source_key: str, record: TelemetryRecord) -> None:
+        saved.append((source_key, record))
+
+    with caplog.at_level(logging.INFO, logger="app.tcp_server"):
+        await serve_client(
+            reader, Writer(), NdtpConfig(), {UNIT: 115106}, shift_for=shift_for, save=save
+        )
+    assert len(saved) == 2
+    assert saved[0][1].lat == 55.7551234
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "unknown_cell" in warnings[0] and "type 99" in warnings[0]
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("unknown_cell type 99: 2" in message for message in infos)

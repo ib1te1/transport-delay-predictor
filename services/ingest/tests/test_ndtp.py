@@ -4,6 +4,8 @@ import struct
 import pytest
 
 from app.ndtp import (
+    CellStop,
+    Frame,
     NdtpError,
     crc16_modbus,
     parse_handshake,
@@ -54,7 +56,9 @@ async def test_fragmented_handshake_and_realtime_share_one_tcp_stream() -> None:
     first = await read_frame(reader, max_frame_bytes=65535, timeout_sec=1)
     assert parse_handshake(first) == UNIT
     second = await read_frame(reader, max_frame_bytes=65535, timeout_sec=1)
-    nav = parse_realtime(second, expected_unit_id=UNIT)
+    parsed = parse_realtime(second, expected_unit_id=UNIT)
+    assert parsed.stop is None
+    nav = parsed.nav
     assert nav.longitude == 376173210
     assert nav.latitude == 557551234
     assert nav.speed_avg == 28
@@ -71,7 +75,7 @@ async def test_bad_crc_drops_only_that_frame() -> None:
         await read_frame(reader, max_frame_bytes=65535, timeout_sec=1)
     assert not caught.value.fatal
     good = await read_frame(reader, max_frame_bytes=65535, timeout_sec=1)
-    assert parse_realtime(good, expected_unit_id=UNIT).timestamp == 1_788_000_000
+    assert parse_realtime(good, expected_unit_id=UNIT).nav.timestamp == 1_788_000_000
 
 
 @pytest.mark.anyio
@@ -95,10 +99,41 @@ async def test_wrong_handshake_address_is_rejected() -> None:
         parse_handshake(parsed)
 
 
-@pytest.mark.anyio
-async def test_unknown_auxiliary_cell_is_rejected() -> None:
-    reader = asyncio.StreamReader()
-    reader.feed_data(frame(1, 101, bytes([0, 0]) + NAV + bytes([99, 0])))
-    parsed = await read_frame(reader, max_frame_bytes=65535, timeout_sec=1)
-    with pytest.raises(NdtpError, match="unknown_cell"):
-        parse_realtime(parsed, expected_unit_id=UNIT)
+NAV_CELL = bytes([0, 0]) + NAV
+CELL_8 = bytes([8, 0]) + bytes(6)
+
+
+def realtime(body: bytes) -> Frame:
+    return Frame(unit_id=UNIT, service_id=1, message_type=101, flags=1, request_id=1, body=body)
+
+
+def test_unknown_cell_after_navigation_keeps_the_navigation() -> None:
+    plain = parse_realtime(realtime(NAV_CELL), expected_unit_id=UNIT)
+    tail = NAV_CELL + CELL_8 + bytes([99, 0]) + b"\xde\xad\xbe\xef"
+    parsed = parse_realtime(realtime(tail), expected_unit_id=UNIT)
+    assert plain.stop is None
+    assert parsed.nav == plain.nav
+    assert parsed.stop == CellStop("unknown_cell", 99, 36)
+
+
+def test_truncated_known_cell_keeps_the_navigation() -> None:
+    parsed = parse_realtime(realtime(NAV_CELL + bytes([8, 0, 1, 2, 3])), expected_unit_id=UNIT)
+    assert parsed.nav.timestamp == 1_788_000_000
+    assert parsed.stop == CellStop("short_cell", 8, 28)
+
+
+def test_lone_cell_type_byte_stops_at_the_short_header() -> None:
+    parsed = parse_realtime(realtime(NAV_CELL + bytes([8])), expected_unit_id=UNIT)
+    assert parsed.nav.latitude == 557551234
+    assert parsed.stop == CellStop("short_cell_header", 8, 28)
+
+
+def test_repeated_navigation_cell_stops_the_walk() -> None:
+    parsed = parse_realtime(realtime(NAV_CELL + NAV_CELL), expected_unit_id=UNIT)
+    assert parsed.stop == CellStop("unknown_cell", 0, 28)
+
+
+def test_frame_without_leading_navigation_is_dropped_but_not_fatal() -> None:
+    with pytest.raises(NdtpError, match="missing_nav") as caught:
+        parse_realtime(realtime(CELL_8 + NAV_CELL), expected_unit_id=UNIT)
+    assert not caught.value.fatal

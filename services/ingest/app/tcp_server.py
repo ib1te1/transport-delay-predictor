@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -10,7 +11,7 @@ from psycopg_pool import ConnectionPool
 from redis.asyncio import Redis
 
 from app.config import NdtpConfig
-from app.ndtp import Nav, NdtpError, parse_handshake, parse_realtime, read_frame
+from app.ndtp import CellStop, NdtpError, parse_handshake, parse_realtime, read_frame
 from app.normalize import from_ndtp
 from app.outbox import Outbox
 from app.store import load_vehicles, save_telemetry, set_emulator_shift, start_emulator_run
@@ -42,6 +43,30 @@ def _save(pool: ConnectionPool, run_id: UUID, source_key: str, record: Telemetry
         save_telemetry(conn, run_id, source_key, record)
 
 
+def _format_counts(counts: Counter) -> str:
+    """One log-friendly line, e.g. ``unknown_cell type 99: 3`` or ``crc: 2``."""
+    parts = []
+    for key, count in sorted(counts.items()):
+        label = f"{key[0]} type {key[1]}" if isinstance(key, tuple) else str(key)
+        parts.append(f"{label}: {count}")
+    return ", ".join(parts)
+
+
+def _count_cell_stop(counts: Counter[tuple[str, int]], unit_id: int, stop: CellStop) -> None:
+    """Log the first stop of each kind; the rest only go into the session summary."""
+    key = (stop.reason, stop.cell_type)
+    counts[key] += 1
+    if counts[key] == 1:
+        log.warning(
+            "NDTP frame from %d: %s, cell type %d at offset %d; navigation kept,"
+            " remaining cells skipped",
+            unit_id,
+            stop.reason,
+            stop.cell_type,
+            stop.offset,
+        )
+
+
 async def serve_client(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
@@ -54,6 +79,8 @@ async def serve_client(
     """Accept one handshake, then valid realtime frames until disconnect."""
     session_id = uuid4()
     ordinal = 0
+    unit_id: int | None = None
+    cell_stops: Counter[tuple[str, int]] = Counter()
     try:
         first = await read_frame(
             reader, max_frame_bytes=config.max_frame_bytes, timeout_sec=config.read_timeout_sec
@@ -67,7 +94,10 @@ async def serve_client(
                     timeout_sec=config.read_timeout_sec,
                 )
                 ordinal += 1
-                nav: Nav = parse_realtime(frame, expected_unit_id=unit_id)
+                realtime = parse_realtime(frame, expected_unit_id=unit_id)
+                if realtime.stop is not None:
+                    _count_cell_stop(cell_stops, unit_id, realtime.stop)
+                nav = realtime.nav
                 shift_s = await shift_for(nav.timestamp)
                 result = from_ndtp(
                     unit_id=unit_id,
@@ -97,6 +127,12 @@ async def serve_client(
     except Exception:
         log.exception("NDTP connection failed; terminal may reconnect")
     finally:
+        if cell_stops:
+            log.info(
+                "NDTP session from %s closed; auxiliary cells skipped: %s",
+                unit_id,
+                _format_counts(cell_stops),
+            )
         writer.close()
         try:
             await writer.wait_closed()

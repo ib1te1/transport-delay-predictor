@@ -55,6 +55,24 @@ class Nav:
     course: int
 
 
+@dataclass(frozen=True)
+class CellStop:
+    """Where the auxiliary cell walk stopped; the navigation before it is kept.
+
+    ``offset`` is the start of the offending cell header within the realtime body.
+    """
+
+    reason: str
+    cell_type: int
+    offset: int
+
+
+@dataclass(frozen=True)
+class Realtime:
+    nav: Nav
+    stop: CellStop | None = None
+
+
 def crc16_modbus(data: bytes) -> int:
     crc = 0xFFFF
     for byte in data:
@@ -120,8 +138,13 @@ def parse_handshake(frame: Frame) -> int:
     return frame.unit_id
 
 
-def parse_realtime(frame: Frame, *, expected_unit_id: int) -> Nav:
-    """Extract the first G6CellNav00 and skip known auxiliary cells."""
+def parse_realtime(frame: Frame, *, expected_unit_id: int) -> Realtime:
+    """Extract the leading G6CellNav00 and walk the known auxiliary cells after it.
+
+    The CRC already covers the whole body, so a trailing cell the decoder
+    cannot size means an unknown or differently described cell, not a
+    damaged navigation. The walk stops there and the navigation is kept.
+    """
     if frame.service_id != REALTIME_SERVICE or frame.message_type != REALTIME_TYPE:
         raise NdtpError("expected_realtime")
     if frame.unit_id != expected_unit_id:
@@ -140,12 +163,13 @@ def parse_realtime(frame: Frame, *, expected_unit_id: int) -> Nav:
     )
     position = 2 + NAV_SIZE
     while position < len(body):
-        if len(body) - position < 2:
-            raise NdtpError("short_cell_header")
         cell_type = body[position]
-        if cell_type not in CELL_SIZES or cell_type == 0:
-            raise NdtpError("unknown_cell")
-        position += 2 + CELL_SIZES[cell_type]
-        if position > len(body):
-            raise NdtpError("short_cell")
-    return nav
+        if len(body) - position < 2:
+            return Realtime(nav, CellStop("short_cell_header", cell_type, position))
+        if cell_type == 0 or cell_type not in CELL_SIZES:
+            return Realtime(nav, CellStop("unknown_cell", cell_type, position))
+        end = position + 2 + CELL_SIZES[cell_type]
+        if end > len(body):
+            return Realtime(nav, CellStop("short_cell", cell_type, position))
+        position = end
+    return Realtime(nav)
