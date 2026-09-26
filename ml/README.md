@@ -34,9 +34,12 @@ python -m venv .venv
 | `python -m busdelay predict --model ../models/submit_v2` | сабмит моделью в `data/submissions/submit_v2.csv` | ~2 с |
 | `python -m busdelay check <файл>` | проверка формата сабмита | ~1 с |
 | `python -m busdelay bench --model ../models/current` | задержка онлайн-прогноза на телеметрии validate | ~1 мин |
+| `python -m busdelay outage --model ../models/ctl` | MAE на test, когда телеметрия оборвалась за N минут до `T` | ~1 мин |
 
 `features` нужно перезапускать после любого изменения в признаках, остальные
-команды читают готовые таблицы.
+команды читают готовые таблицы. С `--outage` он пишет ещё копии точек с
+обрезанной телеметрией (`*_outage.parquet`, +15 с), они нужны только для
+`--outage-weight`.
 
 ## Обучение
 
@@ -50,6 +53,11 @@ python -m busdelay train --name submit_v2 --hint given
 python -m busdelay train --name current_resid --hint mix
 python -m busdelay train --name current_plain --hint mix --no-residual --depth 6 --l2 3
 python -m busdelay blend --name current --model ../models/current_resid ../models/current_plain
+
+# контроль для честных замеров на test (outage): то же, но только на train
+python -m busdelay train --name ctl_resid --hint mix --parts train --seeds 1
+python -m busdelay train --name ctl_plain --hint mix --parts train --seeds 1 --no-residual --depth 6 --l2 3
+python -m busdelay blend --name ctl --model ../models/ctl_resid ../models/ctl_plain
 ```
 
 - `given` — подсказка `cur_dev_s` от организаторов, она же будет в validate.
@@ -99,6 +107,7 @@ meta.json       признаки, настройки, метрики CV, инт�
 | `--group vehicle` | в CV откладывать борта целиком: как модель переносится на незнакомый борт |
 | `--with-synthetic`, `--synthetic-weight 0.5` | вернуть синтетические борта и задать их вес |
 | `--seeds 1` | одна модель вместо среднего пяти, для быстрых сравнений |
+| `--outage-weight 0.5` | добавить копии точек с обрывом телеметрии (нужен `features --outage`); на CV не помогло |
 | `--depth`, `--lr`, `--l2`, `--iterations` | параметры CatBoost, по умолчанию 4, 0.03, 30, 3000 |
 
 Выбирать по строке `model` в таблице CV (MAE на реальных бортах), контроль
@@ -125,6 +134,13 @@ meta.json       признаки, настройки, метрики CV, инт�
 2 минут и до трёх причин по SHAP (`busdelay.explain`), каждая не меньше
 15 с. Как причины переводятся в коды контракта и что нужно в запросе —
 раздел 8 `docs/specs/ml-model.md`.
+
+Если телеметрия оборвалась или идёт без координат, отдельного режима нет:
+модель считает признаки по последнему известному состоянию. Сколько
+теряется точности, показывает
+`outage`: он обрезает телеметрию точек test за N минут до `T` и сравнивает
+модели с двумя прямыми, persistence и нулём. Честные цифры — только у
+моделей, обученных без test (`train --parts train`), например `models/ctl`.
 
 `busdelay.online.LivePredictor` — тот же прогноз с собственными буферами
 телеметрии, на нём работает `bench`.

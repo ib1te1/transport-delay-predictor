@@ -10,6 +10,7 @@ Commands:
 * ``blend`` - average models trained on the same points into one model
 * ``predict`` - predict validate with a saved model and write a submission
 * ``bench`` - replay validate telemetry through the live predictor and time it
+* ``outage`` - MAE on test with the last minutes of telemetry cut
 * ``check`` - check a submission file against ``validate/points.csv``
 
 Paths default to the layout of the repository when run from ``ml/``.
@@ -31,6 +32,7 @@ from .folds import block_ids, group_folds
 from .metrics import summary
 from .model import HINTS, DelayModel, TrainConfig, blend, train
 from .online import LivePredictor
+from .outage import KINDS, evaluate, outage_points
 from .schedule import prepare_plan, split_by_vehicle
 from .submission import check_submission, write_submission
 
@@ -56,17 +58,29 @@ def cmd_features(args) -> int:
             stream = build_features(part.points, part.plan, part.telemetry, hint="gps")
             stream.to_parquet(args.out / f"{name}_stream.parquet", index=False)
             print(f"{name}_stream: {len(stream)} points, cur_dev_s from GPS")
+        if name != "validate" and args.outage:
+            # copies of the real points with the position lost before T, for --outage-weight
+            copies = outage_points(part.points, seed=PARTS.index(name))
+            outage = build_features(copies, part.plan, part.telemetry, hint="gps")
+            outage.to_parquet(args.out / f"{name}_outage.parquet", index=False)
+            print(f"{name}_outage: {len(outage)} copies with the telemetry cut")
     return 0
 
 
-def read_labeled(features: Path, parts: list[str], hint: str) -> pd.DataFrame:
-    """Labeled points with the organisers' ``cur_dev_s``, the GPS one, or both (``mix``)."""
+def read_labeled(features: Path, parts: list[str], hint: str, outage: bool = False) -> pd.DataFrame:
+    """Labeled points with the organisers' ``cur_dev_s``, the GPS one, or both (``mix``).
+
+    With ``outage`` the outage copies are added with hint ``outage``.
+    """
     frames = []
     if hint in ("given", "mix"):
         frames.append(read_feature_table(features, parts).assign(hint="given"))
     if hint in ("gps", "mix"):
         stream = read_feature_table(features, [f"{part}_stream" for part in parts])
         frames.append(stream.assign(hint="gps"))
+    if outage:
+        copies = read_feature_table(features, [f"{part}_outage" for part in parts])
+        frames.append(copies.drop(columns=["gap_s", "outage"]).assign(hint="outage"))
     return pd.concat(frames, ignore_index=True)
 
 
@@ -182,6 +196,7 @@ def cmd_train(args) -> int:
         residual=not args.no_residual,
         vehicle=args.vehicle,
         synthetic_weight=args.synthetic_weight,
+        outage_weight=args.outage_weight,
         classifier=not args.no_classifier,
         folds=args.folds,
         group=args.group,
@@ -190,7 +205,7 @@ def cmd_train(args) -> int:
         seeds=args.seeds,
         hint=args.hint,
     )
-    table = read_labeled(args.features, args.parts, args.hint)
+    table = read_labeled(args.features, args.parts, args.hint, outage=args.outage_weight > 0)
     if not args.with_synthetic:
         table = table[~table["synthetic"]].reset_index(drop=True)
     test = read_feature_table(args.features, ["test"])
@@ -299,6 +314,35 @@ def cmd_bench(args) -> int:
     return 0
 
 
+def cmd_outage(args) -> int:
+    models = {Path(path).name: DelayModel.load(path) for path in args.model}
+    if len(models) != len(args.model):
+        raise ValueError("models must have different directory names")
+    part = load_part(args.data, "test")
+    table = evaluate(models, part, minutes=args.minutes, kinds=args.kinds)
+    print(
+        f"test, {table['points'].iloc[0]} real points with fresh telemetry, "
+        "cur_dev_s from GPS, MAE:"
+    )
+    maes = [c for c in table.columns[3:] if not c.startswith("- ")]
+    differences = [c for c in table.columns if c.startswith("- ") and c[-3:] not in (" lo", " hi")]
+    last = list(models)[-1]
+    header = [f"{n[:12]:>12}" for n in maes] + [
+        f"{last[:10]} {d}"[:22].rjust(22) for d in differences
+    ]
+    print(f"{'outage':>12} {'min':>4} " + " ".join(header))
+    for row in table.to_dict("records"):
+        cells = [f"{row[n]:12.1f}" for n in maes]
+        cells += [
+            f"{row[d]:+.1f} [{row[d + ' lo']:+.1f}, {row[d + ' hi']:+.1f}]".rjust(22)
+            for d in differences
+        ]
+        print(f"{row['outage']:>12} {row['minutes']:4g} " + " ".join(cells))
+    print("differences: MAE, 90% bootstrap interval over runs of points")
+    print("honest only for models trained without test (train --parts train)")
+    return 0
+
+
 def cmd_check(args) -> int:
     return report_check(args.file, args.data)
 
@@ -323,6 +367,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data", type=Path, default=DEFAULT_DATA, help="unpacked dataset")
     p.add_argument("--out", type=Path, default=DEFAULT_FEATURES)
     p.add_argument("--parts", nargs="+", choices=PARTS, default=list(PARTS))
+    p.add_argument(
+        "--outage", action="store_true", help="also copies with the telemetry cut before T"
+    )
     p.set_defaults(func=cmd_features)
 
     p = commands.add_parser("arrivals", help="check detected arrivals against facts")
@@ -354,6 +401,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-residual", action="store_true", help="learn the delay, not the residual")
     p.add_argument("--vehicle", action="store_true", help="add tr_id as a category")
     p.add_argument("--synthetic-weight", type=float, default=1.0)
+    p.add_argument(
+        "--outage-weight",
+        type=float,
+        default=0.0,
+        help="add the copies from features --outage with this weight; 0 - without",
+    )
     p.add_argument("--no-classifier", action="store_true")
     p.add_argument("--folds", type=int, default=5)
     p.add_argument(
@@ -416,6 +469,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data", type=Path, default=DEFAULT_DATA)
     p.add_argument("--moments", type=int, default=20)
     p.set_defaults(func=cmd_bench)
+
+    p = commands.add_parser("outage", help="MAE on test with the telemetry cut before T")
+    p.add_argument("--model", type=Path, nargs="+", required=True, help="models/<name>")
+    p.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    p.add_argument(
+        "--minutes", type=float, nargs="+", default=[0, 2, 5, 10, 15], help="outage lengths"
+    )
+    p.add_argument("--kinds", nargs="+", choices=KINDS, default=list(KINDS))
+    p.set_defaults(func=cmd_outage)
 
     p = commands.add_parser("check", help="check a submission file")
     p.add_argument("file", type=Path)

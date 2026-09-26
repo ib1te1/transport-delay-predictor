@@ -140,6 +140,23 @@ class Track:
         """Fixes with time >= t."""
         return self._slice(int(np.searchsorted(self.t, t, side="left")), len(self.t))
 
+    def lose(self, after: float, keep_fixes: bool = False) -> "Track":
+        """The track as if the position stopped coming after ``after``.
+
+        The fixes after it are dropped (the link is down) or, with ``keep_fixes``, kept
+        without coordinates (the link works, the GPS does not).
+        """
+        if not keep_fixes:
+            return self.upto(after)
+        lost = self.t > after
+        return Track(
+            self.t,
+            self.ok & ~lost,
+            np.where(lost, np.nan, self.lat),
+            np.where(lost, np.nan, self.lon),
+            self.speed,
+        )
+
 
 def point_features(
     plan: VehiclePlan, track: Track, T: float, target_stop_id: int, cur_dev_s: float
@@ -373,7 +390,9 @@ def build_features(
     """Features for a batch of points, one row per point in the same order.
 
     Args:
-        points: frame from :func:`busdelay.data.read_points`.
+        points: frame from :func:`busdelay.data.read_points`. With ``gap_s`` and ``outage``
+            columns (:func:`busdelay.outage.outage_points`) the position of every point is
+            lost ``gap_s`` before ``T``, see :meth:`Track.lose`.
         plan: planned stops from :func:`busdelay.data.read_plan`. A frame with fact times is
             refused.
         telemetry: cleaned telemetry from :func:`busdelay.data.clean_telemetry`.
@@ -381,8 +400,9 @@ def build_features(
             :func:`estimate_cur_dev` - what the live stream will have.
 
     Returns:
-        ``sample_id, tr_id, part, T, target, synthetic, route`` followed by
-        :data:`FEATURES`. ``route`` groups a real vehicle with its synthetic copies.
+        ``sample_id, tr_id, part, T, target, synthetic, route`` (plus ``gap_s, outage`` if
+        the points have them) followed by :data:`FEATURES`. ``route`` groups a real vehicle
+        with its synthetic copies.
     """
     if any("fact" in column for column in plan.columns):
         raise ValueError("plan has fact columns, features must be built from the plan only")
@@ -390,15 +410,19 @@ def build_features(
         raise ValueError(f"hint must be 'given' or 'gps', got {hint!r}")
     plans = split_by_vehicle(prepare_plan(plan))
     tracks = {int(tr_id): Track.from_frame(rows) for tr_id, rows in telemetry.groupby("tr_id")}
+    outages = ["gap_s", "outage"] if "gap_s" in points else []
 
     rows = []
     for p in points.itertuples(index=False):
         track = tracks.get(p.tr_id, Track.empty()).upto(p.T)
+        if outages:
+            track = track.lose(p.T - p.gap_s, keep_fixes=p.outage == "no_position")
         vehicle = plans[p.tr_id]
         cur_dev = p.cur_dev_s if hint == "given" else estimate_cur_dev(vehicle, track, p.T)
         rows.append(point_features(vehicle, track, p.T, p.target_stop_id, cur_dev))
 
-    meta = points[["sample_id", "tr_id", "part", "T", "target"]].reset_index(drop=True)
-    meta["synthetic"] = is_synthetic(meta["tr_id"])
-    meta["route"] = meta["tr_id"].map(route_ids(plan))
+    meta = points[["sample_id", "tr_id", "part", "T", "target", *outages]]
+    meta = meta.reset_index(drop=True)
+    meta.insert(5, "synthetic", is_synthetic(meta["tr_id"]))
+    meta.insert(6, "route", meta["tr_id"].map(route_ids(plan)))
     return pd.concat([meta, pd.DataFrame(rows, columns=FEATURES)], axis=1)

@@ -110,3 +110,41 @@ def test_vehicle_without_telemetry_gets_nan_not_an_error():
     assert np.isnan(row["gps_dev_last_s"])
     assert np.isnan(row["tel_age_s"])
     assert row["cur_dev_s"] == 90
+
+
+def test_lose_drops_or_blanks_the_fixes_after_the_moment():
+    plan, track = _setup()
+    full = Track.from_frame(track)
+    after = plan["t_plan"].iloc[10]
+
+    silent = full.lose(after)
+    assert silent.t.max() <= after and len(silent) == len(full.upto(after))
+
+    blind = full.lose(after, keep_fixes=True)
+    lost = full.t > after
+    assert len(blind) == len(full)
+    assert not blind.ok[lost].any() and np.isnan(blind.lat[lost]).all()
+    np.testing.assert_array_equal(blind.lat[~lost], full.lat[~lost])
+    assert full.ok.all()
+
+
+@pytest.mark.parametrize("kind", ["silence", "no_position"])
+def test_outage_columns_cut_the_track_before_T(kind):
+    plan, track = _setup()
+    T = plan["t_plan"].iloc[15] + 17
+    points = _point(plan, T).assign(gap_s=300.0, outage=kind)
+    cut = build_features(points, plan, track, hint="gps")
+    assert list(cut.columns[:9]) == [
+        "sample_id", "tr_id", "part", "T", "target", "synthetic", "route", "gap_s", "outage"
+    ]  # fmt: skip
+    assert list(cut.columns[9:]) == FEATURES
+
+    row = cut.iloc[0]
+    assert row["tel_age_s"] >= 300
+    if kind == "silence":
+        by_hand = build_features(_point(plan, T), plan, track[track["t"] <= T - 300], hint="gps")
+        pd.testing.assert_series_equal(row[FEATURES], by_hand.iloc[0][FEATURES], check_names=False)
+    else:
+        # the fixes still come, only without a position
+        fresh = build_features(_point(plan, T), plan, track, hint="gps").iloc[0]
+        assert row["fixes_15m"] == fresh["fixes_15m"] and row["ok_share_15m"] < 1

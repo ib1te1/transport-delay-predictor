@@ -15,7 +15,9 @@ with that many trees, with several seeds averaged into one model.
 
 The table may hold every point twice, with the organisers' ``cur_dev_s`` and with the one
 estimated from GPS (column ``hint``, ``given`` or ``gps``). Metrics are then reported for
-both, the live stream only has the GPS one.
+both, the live stream only has the GPS one. Rows with ``hint`` ``outage`` are copies with
+the last minutes of telemetry cut (:mod:`busdelay.outage`). They only add training data:
+they get their own metrics, but the number of trees is picked without them.
 """
 
 import json
@@ -44,6 +46,8 @@ INTERVAL_QUANTILES = (0.1, 0.9)
 
 HINTS = ("given", "gps", "mix")
 GPS_SUFFIX = ", cur_dev from GPS"
+OUTAGE_SUFFIX = ", telemetry cut 1-15 min"
+SUFFIXES = {"given": "", "gps": GPS_SUFFIX, "outage": OUTAGE_SUFFIX}
 
 REGRESSOR_FILE = "regressor.cbm"
 CLASSIFIER_FILE = "late.cbm"
@@ -61,6 +65,8 @@ class TrainConfig:
     residual: bool = True
     vehicle: bool = False
     synthetic_weight: float = 1.0
+    # weight of the outage copies (hint "outage"), 0 when the table has none
+    outage_weight: float = 0.0
     classifier: bool = True
     folds: int = 5
     # "runs" - like the organisers' split; "vehicle" - whole vehicles held out;
@@ -112,11 +118,25 @@ def hint_rows(table: pd.DataFrame) -> dict[str, np.ndarray]:
     if "hint" not in table:
         return {"given": np.ones(len(table), dtype=bool)}
     hint = table["hint"].to_numpy()
-    return {h: hint == h for h in ("given", "gps") if (hint == h).any()}
+    return {h: hint == h for h in SUFFIXES if (hint == h).any()}
+
+
+def _outage(table: pd.DataFrame) -> np.ndarray:
+    if "hint" not in table:
+        return np.zeros(len(table), dtype=bool)
+    return table["hint"].to_numpy() == "outage"
 
 
 def _weights(table: pd.DataFrame, config: TrainConfig) -> np.ndarray:
-    return np.where(table["synthetic"].to_numpy(dtype=bool), config.synthetic_weight, 1.0)
+    weight = np.where(table["synthetic"].to_numpy(dtype=bool), config.synthetic_weight, 1.0)
+    return np.where(_outage(table), config.outage_weight, weight)
+
+
+def fit_lines(table: pd.DataFrame, y: np.ndarray) -> SplitLinear:
+    """The two lines, fit without the outage copies: their ``cur_dev_s`` is often minutes
+    off and would flatten the lines for everyone."""
+    keep = ~_outage(table)
+    return SplitLinear().fit(table[keep], np.asarray(y)[keep])
 
 
 @dataclass
@@ -249,7 +269,7 @@ def fit_models(
     lines = None
     offset = np.zeros(len(table))
     if config.residual:
-        base = SplitLinear().fit(table, y)
+        base = fit_lines(table, y)
         lines = base.lines
         offset = base.predict(table)
 
@@ -312,11 +332,12 @@ def cross_validate(table: pd.DataFrame, config: TrainConfig) -> CVResult:
     curves, late_curves, regressors, classifiers = [], [], [], []
     for k in range(config.folds):
         train = folds != k
-        held = (folds == k) & real
+        # the curves that pick the number of trees; outage copies would pull it their way
+        held = (folds == k) & real & ~_outage(table)
         if not held.any():
             raise ValueError(f"fold {k} has no real vehicles to score on")
 
-        lines = SplitLinear().fit(table[train], y[train])
+        lines = fit_lines(table[train], y[train])
         base[folds == k] = lines.predict(table[folds == k])
         offset_train = lines.predict(table[train]) if config.residual else 0.0
         offset_held = base[held] if config.residual else 0.0
@@ -371,7 +392,7 @@ def cv_scores(oof: pd.DataFrame) -> dict:
     base = oof["base"].to_numpy(dtype=float)
     scores = {}
     for hint, rows in hint_rows(oof).items():
-        suffix = "" if hint == "given" else GPS_SUFFIX
+        suffix = SUFFIXES[hint]
         r = real & rows
         scores.update(
             {
@@ -399,7 +420,7 @@ def control_scores(oof: pd.DataFrame) -> dict:
     for hint, rows in hint_rows(oof).items():
         r = scored & rows
         if r.any():
-            suffix = "" if hint == "given" else GPS_SUFFIX
+            suffix = SUFFIXES[hint]
             scores[f"persistence{suffix}"] = summary(y[r], cur[r], cur[r])
             scores[f"model{suffix}"] = summary(y[r], pred[r], cur[r])
     return scores
@@ -446,6 +467,8 @@ def train(
     """
     if config.hint not in HINTS:
         raise ValueError(f"hint must be one of {', '.join(HINTS)}, got {config.hint!r}")
+    if _outage(table).any() and config.outage_weight <= 0:
+        raise ValueError("the table has outage copies, set outage_weight above 0")
     started = datetime.now(UTC)
     cv = cross_validate(table, config)
     part = table["part"].to_numpy()

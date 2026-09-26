@@ -67,3 +67,22 @@ def summary(y_true, y_pred, cur_dev) -> dict[str, float]:
         "score": score_estimate(y_true, y_pred),
         "rows": int(len(error)),
     }
+
+
+def paired_interval(
+    difference, groups, level: float = 0.9, samples: int = 2000, seed: int = 0
+) -> tuple[float, float]:
+    """Bootstrap interval of the mean of a per-row difference, resampling whole groups.
+
+    ``difference`` is usually ``|error of A| - |error of B|`` on the same rows; the groups are
+    runs of points (:func:`busdelay.folds.block_ids`), neighbouring points are not independent.
+    """
+    difference = np.asarray(difference, dtype=float)
+    _, group = np.unique(np.asarray(groups), return_inverse=True)
+    sums = np.bincount(group, weights=difference)
+    counts = np.bincount(group)
+    picked = np.random.default_rng(seed).integers(0, len(sums), size=(samples, len(sums)))
+    means = sums[picked].sum(axis=1) / counts[picked].sum(axis=1)
+    tail = (1 - level) / 2
+    lo, hi = np.quantile(means, [tail, 1 - tail])
+    return float(lo), float(hi)
