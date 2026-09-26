@@ -30,5 +30,6 @@ RUN pip install --no-cache-dir --no-deps /packages/contracts /packages/common \
 COPY services/ingest/app ./app
 
 EXPOSE 8000
+EXPOSE 9201
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

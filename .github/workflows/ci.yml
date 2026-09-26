@@ -2,9 +2,9 @@ name: CI
 
 # Five people merge into main in parallel; this exists so a branch that
 # breaks another track's imports is caught before the merge, not on the
-# first joint build. ruff, and pytest against throwaway Postgres and
-# Redis service containers. No image builds and no compose beyond config
-# validation: see docs/specs/system-design.md.
+# first joint build. Ruff and pytest run against throwaway Postgres and
+# Redis service containers; ingest also gets a Compose startup and replay
+# smoke check.
 
 on:
   push:
@@ -27,6 +27,7 @@ jobs:
     outputs:
       tests: ${{ steps.select.outputs.tests }}
       web: ${{ steps.select.outputs.web }}
+      ingest: ${{ steps.select.outputs.ingest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,8 +79,15 @@ jobs:
           fi
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
+          if $all || printf '%s\n' "$files" | grep -Eq '^(services/ingest/|migrations/|packages/|config/)'; then
+            ingest=true
+          else
+            ingest=false
+          fi
+          echo "ingest=$ingest" >> "$GITHUB_OUTPUT"
           echo "tests=$tests"
           echo "web=$web"
+          echo "ingest=$ingest"
 
   lint:
     runs-on: ubuntu-latest
@@ -168,6 +176,59 @@ jobs:
       # named "app", and a single run from the root would bind it to one.
       - run: pytest
         working-directory: ${{ matrix.dir }}
+
+  ingest-image:
+    needs: changes
+    if: needs.changes.outputs.ingest == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose --profile replay --profile emulator config -q
+      - name: Prepare replay smoke data
+        run: |
+          mkdir -p data/dataset/test
+          cat > data/dataset/test/schedule.csv <<'CSV'
+          tt_action_item_id,tr_id,geom,time_begin
+          1,2,POINT (38 55),2026-01-06 00:00:01
+          CSV
+          cat > data/dataset/test/traffic.csv <<'CSV'
+          unit_id,tr_id,event_time,location_valid,lat,lon,speed,heading
+          1,2,2026-01-06 00:00:03,True,55,38,20,90
+          1,2,2026-01-06 00:00:01,True,55,38,20,90
+          1,2,2026-01-06 00:00:02,True,55,38,20,90
+          CSV
+      - run: docker compose up --build --wait --wait-timeout 120 ingest
+      - run: curl --fail http://127.0.0.1:8001/health
+      - name: Replay through Compose
+        run: docker compose --profile replay run --rm replay
+      - name: Check stored and published telemetry
+        run: |
+          rows=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
+            "SELECT count(*), count(*) FILTER (WHERE published_at IS NULL), string_agg(source_key, ',' ORDER BY id) FROM telemetry")
+          test "$rows" = '3|0|3,4,2'
+          test "$(docker compose exec -T redis redis-cli XLEN telemetry | tr -d '\r')" = 3
+          run=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
+            "SELECT status FROM ingest_runs WHERE mode = 'replay'")
+          test "$run" = completed
+      - name: Re-running a completed replay publishes nothing
+        run: |
+          code=0
+          out=$(docker compose --profile replay run --rm replay 2>&1) || code=$?
+          printf '%s\n' "$out"
+          test "$code" -eq 3
+          grep -q 'scripts/reset-demo' <<<"$out"
+          rows=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
+            "SELECT count(*), count(*) FILTER (WHERE published_at IS NULL), string_agg(source_key, ',' ORDER BY id) FROM telemetry")
+          test "$rows" = '3|0|3,4,2'
+          test "$(docker compose exec -T redis redis-cli XLEN telemetry | tr -d '\r')" = 3
+          runs=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
+            "SELECT count(*), string_agg(status, ',') FROM ingest_runs WHERE mode = 'replay'")
+          test "$runs" = '1|completed'
+      - if: failure()
+        run: docker compose --profile replay logs --no-color postgres redis migrate seed ingest replay
+      - if: always()
+        run: docker compose down -v
 
   web:
     needs: changes
