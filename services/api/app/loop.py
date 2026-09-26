@@ -125,7 +125,12 @@ async def run_once(
     async def publish(rows: list[PredictionRow]) -> None:
         for row in rows:
             await append_async(redis, streams.predictions, row)
-        await dashboard.publish_predictions(rows)
+        try:
+            await dashboard.publish_predictions(rows)
+        except Exception:
+            log.exception(
+                "dashboard update failed for %d prediction row(s); scoring continues", len(rows)
+            )
 
     async def tick(t: datetime) -> None:
         await run_tick(

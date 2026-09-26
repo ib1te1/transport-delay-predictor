@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import random
 from datetime import timedelta
 
@@ -235,6 +236,41 @@ async def test_run_refreshes_once_a_period() -> None:
 
     assert periods == [1.0, 1.0, 1.0]
     assert bus.types().count("clock") == 3
+
+
+@pytest.mark.anyio
+async def test_run_keeps_going_after_a_failed_refresh(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    bus = Bus()
+    dashboard = attached(bus, telemetry_record(7, at(0)))
+    original_refresh = dashboard.refresh
+    calls = 0
+
+    async def refresh() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("boom")
+        await original_refresh()
+
+    monkeypatch.setattr(dashboard, "refresh", refresh)
+    periods: list[float] = []
+
+    async def sleep(period: float) -> None:
+        periods.append(period)
+        if len(periods) == 2:
+            raise Stop
+
+    with caplog.at_level(logging.ERROR, logger="app.dashboard"), pytest.raises(Stop):
+        await dashboard.run(sleep=sleep)
+
+    assert calls == 2
+    assert periods == [1.0, 1.0]
+    [record] = caplog.records
+    assert record.levelname == "ERROR"
+    assert record.getMessage() == "dashboard refresh failed"
+    assert bus.types() == ["clock", "vehicles"]
 
 
 async def no_predictions(tr_id, since):

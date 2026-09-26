@@ -153,9 +153,17 @@ class Dashboard:
                 await self._send(VehiclesMessage(type="vehicles", data=data))
 
     async def run(self, *, period: float = REFRESH_SEC, sleep: Sleep = asyncio.sleep) -> None:
-        """Refresh once a ``period`` of real time until cancelled."""
+        """Refresh once a ``period`` of real time until cancelled.
+
+        A refresh that raises is logged and retried after ``period``; it
+        does not stop the loop. Cancellation is not caught here and still
+        stops it.
+        """
         while True:
-            await self.refresh()
+            try:
+                await self.refresh()
+            except Exception:
+                log.exception("dashboard refresh failed")
             await sleep(period)
 
     def snapshot(self) -> StateSnapshot:
