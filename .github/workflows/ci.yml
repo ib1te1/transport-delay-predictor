@@ -211,6 +211,20 @@ jobs:
           run=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
             "SELECT status FROM ingest_runs WHERE mode = 'replay'")
           test "$run" = completed
+      - name: Re-running a completed replay publishes nothing
+        run: |
+          code=0
+          out=$(docker compose --profile replay run --rm replay 2>&1) || code=$?
+          printf '%s\n' "$out"
+          test "$code" -eq 3
+          grep -q 'scripts/reset-demo' <<<"$out"
+          rows=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
+            "SELECT count(*), count(*) FILTER (WHERE published_at IS NULL), string_agg(source_key, ',' ORDER BY id) FROM telemetry")
+          test "$rows" = '3|0|3,4,2'
+          test "$(docker compose exec -T redis redis-cli XLEN telemetry | tr -d '\r')" = 3
+          runs=$(docker compose exec -T postgres psql -U delay_predictor -d delay_predictor -Atc \
+            "SELECT count(*), string_agg(status, ',') FROM ingest_runs WHERE mode = 'replay'")
+          test "$runs" = '1|completed'
       - if: failure()
         run: docker compose --profile replay logs --no-color postgres redis migrate seed ingest replay
       - if: always()
