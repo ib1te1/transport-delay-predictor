@@ -16,6 +16,10 @@ What the model needs in a request (measured on test, docs/specs/ml-model.md):
 training; the value sent with the request is used only if the estimate fails. With
 ``hint="given"`` the sent value is used as is: that is the offline submission, where the
 organisers give it.
+
+When the position stops coming (the link is down or the GPS is lost), the model still
+answers from the last known state (:mod:`busdelay.outage` measures what that costs). How old
+the last position is goes back with the answer, so that the service can flag it.
 """
 
 from dataclasses import dataclass, replace
@@ -64,6 +68,8 @@ class Answer:
     reasons: list[str]
     # the cur_dev_s the forecast was made with, NaN if none was known
     cur_dev_s: float
+    # seconds from the last fix with a valid position to T, NaN if there is none
+    position_age_s: float = np.nan
     # why the model could not be used for this point, None when it was
     fallback: str | None = None
 
@@ -115,13 +121,15 @@ class Forecaster:
         """
         answers: list[Answer | None] = [None] * len(queries)
         plans, tracks = batch_inputs(queries)
-        rows, index, used = [], [], []
+        rows, index, used, ages = [], [], [], []
         for i, query in enumerate(queries):
+            track = tracks.get(i, Track.empty()).upto(query.T)
+            seen = track.t[track.ok]
+            age = query.T - seen[-1] if seen.size else np.nan
             try:
                 if i not in plans:
                     raise KeyError(f"no planned stops for vehicle {query.tr_id}")
                 plan = plans[i]
-                track = tracks.get(i, Track.empty()).upto(query.T)
                 cur = self.cur_dev(query, plan, track)
                 rows.append(point_features(plan, track, query.T, query.target_stop_id, cur))
             except (KeyError, ValueError) as exc:
@@ -132,11 +140,13 @@ class Forecaster:
                     late_prob=np.nan,
                     reasons=[],
                     cur_dev_s=sent,
+                    position_age_s=age,
                     fallback=str(exc),
                 )
                 continue
             index.append(i)
             used.append(cur)
+            ages.append(age)
 
         if rows:
             table = pd.DataFrame(rows)
@@ -154,6 +164,7 @@ class Forecaster:
                     late_prob=float(late[k]),
                     reasons=top_reasons(contributions[k]),
                     cur_dev_s=float(used[k]),
+                    position_age_s=float(ages[k]),
                 )
         return answers
 

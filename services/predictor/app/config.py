@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from common.config import REPO_ROOT, StrictModel
@@ -13,6 +14,10 @@ class PredictorConfig(StrictModel):
     # the value sent with the request only fills in when the estimate fails.
     # request - as sent.
     cur_dev_source: Literal["gps", "request"] = "gps"
+    # A forecast whose last valid position is older than this, or missing, gets the
+    # stale_telemetry reason. The api flags only vehicles that went silent; one that keeps
+    # reporting without a position it does not notice.
+    stale_after_sec: int = Field(default=120, gt=0)
 
 
 class PredictorSettings(BaseSettings):

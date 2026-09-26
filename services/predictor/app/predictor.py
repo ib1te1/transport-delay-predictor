@@ -68,6 +68,7 @@ class ModelPredictor:
         hint = "gps" if config.cur_dev_source == "gps" else "given"
         self.forecaster = Forecaster(self.model, hint=hint)
         self.version = f"{model_dir.name}@{self.model.meta.get('created', 'unknown')}"
+        self.stale_after_s = float(config.stale_after_sec)
         # CatBoost may be called from several worker threads at once
         self._lock = threading.Lock()
 
@@ -83,7 +84,7 @@ class ModelPredictor:
                 )
                 responses.append(baseline_response(request))
             else:
-                responses.append(to_response(answer, self.version))
+                responses.append(to_response(answer, self.version, self.stale_after_s))
         return responses
 
 
@@ -151,11 +152,18 @@ def reason_codes(reasons: list[str]) -> list[ReasonCode]:
     return known or [ReasonCode.unknown]
 
 
-def to_response(answer: Answer, version: str) -> PredictResponse:
+def to_response(answer: Answer, version: str, stale_after_s: float) -> PredictResponse:
+    """The contract's answer. A forecast from an old position, or from none at all, also
+    gets ``stale_telemetry``: the api does not see a vehicle that reports without a position.
+    """
+    reasons = list(answer.reasons)
+    # NaN, no position at all, is not <= either
+    if not answer.position_age_s <= stale_after_s:
+        reasons.append("signal")
     return PredictResponse(
         sample_id=answer.sample_id,
         prediction_s=answer.delay_s,
         p_late=None if math.isnan(answer.late_prob) else answer.late_prob,
-        reasons=reason_codes(answer.reasons),
+        reasons=reason_codes(reasons),
         model_version=version,
     )

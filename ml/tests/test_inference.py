@@ -70,6 +70,21 @@ def test_a_broken_point_falls_back_without_failing_the_batch(parts, model):
     assert answers[0].fallback is None and answers[2].fallback is None
 
 
+def test_answers_tell_how_old_the_last_position_is(parts, model):
+    test = parts["test"]
+    queries = queries_for_points(test.points.iloc[:3], test.plan, test.telemetry)
+    fresh, silent, blind = queries
+    silent.fixes = silent.fixes[silent.fixes["t"] <= silent.T - 600]
+    blind.fixes = blind.fixes.assign(location_valid=False)
+
+    answers = Forecaster(model).predict(queries)
+
+    assert all(a.fallback is None and np.isfinite(a.delay_s) for a in answers)
+    assert answers[0].position_age_s <= 10
+    assert answers[1].position_age_s >= 600
+    assert np.isnan(answers[2].position_age_s)
+
+
 def test_unknown_hint_is_refused(model):
     with pytest.raises(ValueError, match="hint"):
         Forecaster(model, hint="matcher")

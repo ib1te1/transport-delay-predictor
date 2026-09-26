@@ -6,8 +6,9 @@ from fastapi.testclient import TestClient
 
 from app.config import PredictorConfig, PredictorSettings
 from app.main import create_app
-from app.predictor import REASON_CODES, reason_codes, to_query
+from app.predictor import REASON_CODES, reason_codes, to_query, to_response
 from busdelay.explain import REASONS
+from busdelay.inference import Answer
 from common.config import REPO_ROOT, load_section
 from contracts import (
     PredictRequest,
@@ -109,6 +110,50 @@ def test_a_point_the_model_cannot_use_gets_the_baseline(client):
     assert answers[1].model_version == "baseline" and answers[1].prediction_s == 75.0
 
 
+def silent(r: PredictRequest, minutes: float) -> PredictRequest:
+    """The same request with the last ``minutes`` of telemetry lost."""
+    cut = r.T - timedelta(minutes=minutes)
+    return r.model_copy(update={"telemetry": [p for p in r.telemetry if p.event_time <= cut]})
+
+
+def blind(r: PredictRequest) -> PredictRequest:
+    """The same request with every fix reported without a position."""
+    lost = {"lat": None, "lon": None, "location_valid": False}
+    return r.model_copy(update={"telemetry": [p.model_copy(update=lost) for p in r.telemetry]})
+
+
+@pytest.mark.parametrize(
+    "lose",
+    [
+        lambda r: silent(r, 10),
+        blind,
+        lambda r: r.model_copy(update={"telemetry": []}),
+    ],
+    ids=["silent for 10 min", "no position", "no telemetry"],
+)
+def test_lost_telemetry_is_forecast_by_the_model_and_flagged(client, lose):
+    fresh = request(1, 90.0, cur_dev_s=80.0)
+    answers = post(client, [fresh, lose(request(2, 90.0, cur_dev_s=80.0))])
+
+    assert all(a.model_version.startswith("current@") for a in answers)
+    assert all(math.isfinite(a.prediction_s) and a.p_late is not None for a in answers)
+    assert ReasonCode.stale_telemetry not in answers[0].reasons
+    assert ReasonCode.stale_telemetry in answers[1].reasons
+
+
+def test_stale_telemetry_is_added_by_the_age_of_the_last_position():
+    def reasons(age: float) -> list[ReasonCode]:
+        answer = Answer("s", 60.0, 0.3, ["carried_delay"], 50.0, position_age_s=age)
+        return to_response(answer, "v", stale_after_s=120.0).reasons
+
+    assert reasons(30.0) == [ReasonCode.accumulated_delay]
+    assert reasons(120.0) == [ReasonCode.accumulated_delay]
+    assert reasons(121.0) == [ReasonCode.accumulated_delay, ReasonCode.stale_telemetry]
+    assert reasons(math.nan) == [ReasonCode.accumulated_delay, ReasonCode.stale_telemetry]
+    alone = Answer("s", 0.0, 0.1, [], 0.0, position_age_s=math.nan)
+    assert to_response(alone, "v", 120.0).reasons == [ReasonCode.stale_telemetry]
+
+
 def test_model_endpoint_reports_the_model(client):
     info = client.get("/model").json()
     assert info["kind"] == "model" and info["model_version"].startswith("current@")
@@ -166,3 +211,4 @@ def test_request_becomes_a_query_without_facts():
 def test_repository_config_has_a_valid_predictor_section():
     config = load_section(SYSTEM_YAML, "predictor", PredictorConfig)
     assert config.cur_dev_source == "gps"
+    assert config.stale_after_sec == 120

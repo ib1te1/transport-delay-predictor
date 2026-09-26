@@ -42,4 +42,9 @@ predictor:
   # the way the model saw it in training; the value sent by the api fills in
   # only when the estimate fails. request: as sent.
   cur_dev_source: gps
+  # A forecast made from a position older than this, or without one, gets
+  # the stale_telemetry reason. The api flags only silent vehicles
+  # (stale_after_sec above); in the test part 8% of points keep reporting
+  # without a valid position for longer.
+  stale_after_sec: 120
 replay: {}
