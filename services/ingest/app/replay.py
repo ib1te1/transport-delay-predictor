@@ -25,6 +25,8 @@ from app.normalize import from_csv
 from app.outbox import Outbox
 from app.sort import SortedCsvRow, SortResult, read_sorted, sort_to_file
 from app.store import (
+    RESET_HINT,
+    ReplayCompleted,
     RunState,
     advance_replay_cursor,
     load_vehicles,
@@ -80,8 +82,6 @@ def _start(
     config: ReplayConfig,
     start_at: datetime | None,
     end_at: datetime | None,
-    *,
-    new_run: bool,
 ) -> tuple[RunState, dict[int, int]]:
     with pool.connection() as conn:
         run = start_replay_run(
@@ -92,7 +92,6 @@ def _start(
             start_at=start_at,
             end_at=end_at,
             speedup=config.speedup,
-            new_run=new_run,
         )
         return run, load_vehicles(conn)
 
@@ -260,11 +259,10 @@ async def sort_and_play(
 async def run_replay(
     settings: ServiceSettings,
     *,
-    new_run: bool = False,
     sleep: Sleep = asyncio.sleep,
     clock: Clock = time.monotonic,
 ) -> ReplayStats:
-    """Resume an interrupted replay or run a new one when explicitly requested."""
+    """Play the dataset period once, resuming an unfinished run after a restart."""
     config, dataset = load_replay_config(settings.config_path)
     path = settings.data_dir / config.period / "traffic.csv"
     if not path.is_file():
@@ -281,9 +279,7 @@ async def run_replay(
     try:
         outbox = Outbox(pool, redis)
         await outbox.drain()
-        run, vehicles = await asyncio.to_thread(
-            _start, pool, path, config, start_at, end_at, new_run=new_run
-        )
+        run, vehicles = await asyncio.to_thread(_start, pool, path, config, start_at, end_at)
         work_dir = Path(tempfile.mkdtemp(prefix=SORT_DIR_PREFIX))
 
         async def save(
@@ -329,9 +325,9 @@ async def run_replay(
         await asyncio.to_thread(pool.close)
 
 
-async def _run_with_signals(settings: ServiceSettings, *, new_run: bool) -> ReplayStats:
+async def _run_with_signals(settings: ServiceSettings) -> ReplayStats:
     loop = asyncio.get_running_loop()
-    task = asyncio.create_task(run_replay(settings, new_run=new_run))
+    task = asyncio.create_task(run_replay(settings))
     try:
         loop.add_signal_handler(signal.SIGTERM, task.cancel)
     except NotImplementedError:
@@ -347,13 +343,17 @@ async def _run_with_signals(settings: ServiceSettings, *, new_run: bool) -> Repl
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Replay one dataset period into telemetry")
-    parser.add_argument(
-        "--new-run", action="store_true", help="start a new run after resetting demo state"
-    )
-    args = parser.parse_args(argv)
+    parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
-        asyncio.run(_run_with_signals(ServiceSettings(), new_run=args.new_run))
+        asyncio.run(_run_with_signals(ServiceSettings()))
+    except ReplayCompleted as exc:
+        log.warning(
+            "replay run %s is already completed; to replay again reset the demo: %s",
+            exc.run_id,
+            RESET_HINT,
+        )
+        return 3
     except asyncio.CancelledError:
         log.info("replay interrupted")
         return 130

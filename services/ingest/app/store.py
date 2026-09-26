@@ -47,6 +47,17 @@ def _run(row: dict) -> RunState:
     )
 
 
+RESET_HINT = "scripts/reset-demo.sh (or scripts/reset-demo.ps1)"
+
+
+class ReplayCompleted(Exception):
+    """The latest replay run has finished; only a demo reset starts another."""
+
+    def __init__(self, run_id: UUID) -> None:
+        super().__init__(f"replay run {run_id} is already completed")
+        self.run_id = run_id
+
+
 def start_replay_run(
     conn: psycopg.Connection,
     *,
@@ -56,12 +67,13 @@ def start_replay_run(
     start_at: datetime | None,
     end_at: datetime | None,
     speedup: float,
-    new_run: bool = False,
 ) -> RunState:
-    """Resume the latest replay or explicitly start another one.
+    """Start the first replay run or resume the latest unfinished one.
 
-    The file fingerprint and time/pacing settings cannot change under an
-    existing cursor. The caller owns the transaction.
+    A run left ``active`` belongs to a process that died without cleanup and
+    is resumed like an ``interrupted`` one. The file fingerprint and
+    time/pacing settings cannot change under an existing cursor. The caller
+    owns the transaction.
     """
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
@@ -69,40 +81,32 @@ def start_replay_run(
             " ORDER BY started_at DESC, run_id DESC LIMIT 1 FOR UPDATE"
         )
         existing = cur.fetchone()
-        if existing is not None and not new_run:
-            if existing["status"] == "completed":
-                raise ValueError("replay already completed; start a new run explicitly")
-            expected = (period, str(file_path), file_sha256, start_at, end_at, speedup)
-            actual = tuple(
-                existing[name]
-                for name in ("period", "file_path", "file_sha256", "start_at", "end_at", "speedup")
-            )
-            if actual != expected:
-                raise ValueError("replay file or settings changed; cannot resume this run")
+        if existing is None:
+            run_id = uuid4()
             cur.execute(
-                "UPDATE ingest_runs SET status = 'active' WHERE run_id = %s",
-                (existing["run_id"],),
+                "INSERT INTO ingest_runs"
+                " (run_id, mode, period, status, file_path, file_sha256, start_at, end_at,"
+                " speedup) VALUES (%s, 'replay', %s, 'active', %s, %s, %s, %s, %s)",
+                (run_id, period, str(file_path), file_sha256, start_at, end_at, speedup),
             )
-            existing["status"] = "active"
-            return _run(existing)
-        if existing is not None and existing["status"] == "active":
-            raise ValueError("another replay run is active")
-        if existing is not None:
-            cur.execute(
-                "SELECT EXISTS (SELECT 1 FROM telemetry"
-                " WHERE run_id = %s AND published_at IS NULL)",
-                (existing["run_id"],),
-            )
-            if cur.fetchone()["exists"]:
-                raise ValueError("previous replay still has unpublished telemetry")
-        run_id = uuid4()
-        cur.execute(
-            "INSERT INTO ingest_runs"
-            " (run_id, mode, period, status, file_path, file_sha256, start_at, end_at, speedup)"
-            " VALUES (%s, 'replay', %s, 'active', %s, %s, %s, %s, %s)",
-            (run_id, period, str(file_path), file_sha256, start_at, end_at, speedup),
+            return RunState(run_id, "active", None, None, None)
+        if existing["status"] == "completed":
+            raise ReplayCompleted(existing["run_id"])
+        expected = (period, str(file_path), file_sha256, start_at, end_at, speedup)
+        actual = tuple(
+            existing[name]
+            for name in ("period", "file_path", "file_sha256", "start_at", "end_at", "speedup")
         )
-    return RunState(run_id, "active", None, None, None)
+        if actual != expected:
+            raise ValueError(
+                f"replay file or settings changed; cannot resume run {existing['run_id']}."
+                f" To start a new run reset the demo: {RESET_HINT}"
+            )
+        cur.execute(
+            "UPDATE ingest_runs SET status = 'active' WHERE run_id = %s", (existing["run_id"],)
+        )
+        existing["status"] = "active"
+        return _run(existing)
 
 
 def start_emulator_run(

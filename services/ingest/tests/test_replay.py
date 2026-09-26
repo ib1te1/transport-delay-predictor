@@ -5,6 +5,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -13,6 +14,7 @@ from app.config import ReplayConfig
 from app.replay import (
     ReplayStats,
     file_sha256,
+    main,
     play_sorted_rows,
     remove_stale_sort_dirs,
     run_replay,
@@ -20,6 +22,7 @@ from app.replay import (
     sort_in_thread,
 )
 from app.sort import SortCancelled, SortedCsvRow, read_sorted, sort_to_file
+from app.store import ReplayCompleted
 from common.config import ServiceSettings
 from common.db import connect
 from contracts import TelemetryRecord
@@ -405,3 +408,32 @@ async def test_resume_anchors_on_the_first_row_after_the_cursor(tmp_path: Path) 
     )
     assert sink.lines == [4, 5]
     assert clock.sleeps == [1.0]
+
+
+def stub_run(monkeypatch: pytest.MonkeyPatch, error: BaseException) -> None:
+    """Keep main() away from real settings, databases and dataset files."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused@127.0.0.1:1/unused")
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:1/0")
+
+    async def fake_run(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr("app.replay._run_with_signals", fake_run)
+
+
+def test_removed_new_run_flag_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_run(monkeypatch, AssertionError("replay must not start"))
+    with pytest.raises(SystemExit) as caught:
+        main(["--new-run"])
+    assert caught.value.code == 2
+
+
+def test_completed_run_exits_with_code_3_and_points_to_reset(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    run_id = uuid4()
+    stub_run(monkeypatch, ReplayCompleted(run_id))
+    with caplog.at_level(logging.WARNING, logger="app.replay"):
+        assert main([]) == 3
+    assert f"replay run {run_id} is already completed" in caplog.text
+    assert "scripts/reset-demo.sh (or scripts/reset-demo.ps1)" in caplog.text
