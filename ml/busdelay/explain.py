@@ -4,9 +4,10 @@ CatBoost gives SHAP values, a contribution in seconds for every feature of every
 features are grouped into a few reasons a dispatcher understands, and the reason with the
 largest push towards being late is shown on the incident card.
 
-With a residual model the prediction is ``baseline + trees``. The baseline part is split
-too: ``a * cur_dev_s`` goes to the carried delay, and the difference between the two lines
-of :class:`busdelay.baselines.SplitLinear` goes to the layover.
+With a residual model the prediction is ``baseline + trees`` (in a blend the baseline has a
+weight below one). The baseline part is split too: ``a * cur_dev_s`` goes to the carried
+delay, and the difference between the two lines of :class:`busdelay.baselines.SplitLinear`
+goes to the layover.
 """
 
 import numpy as np
@@ -105,13 +106,14 @@ def reason_contributions(model: DelayModel, table: pd.DataFrame, fast: bool = Tr
     out["expected_s"] = shap[:, -1]
 
     if model.lines is not None:
+        w = model.baseline_weight
         a, b = model.lines[False]
         a_layover, b_layover = model.lines[True]
         cur = table["cur_dev_s"].fillna(0.0).to_numpy()
         layover = table["new_trip_ahead"].to_numpy() > 0
-        out["carried_delay"] += a * cur
-        out["layover"] += np.where(layover, (a_layover - a) * cur + (b_layover - b), 0.0)
-        out["expected_s"] += b
+        out["carried_delay"] += w * a * cur
+        out["layover"] += w * np.where(layover, (a_layover - a) * cur + (b_layover - b), 0.0)
+        out["expected_s"] += w * b
     return out
 
 

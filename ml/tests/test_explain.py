@@ -5,7 +5,7 @@ import pytest
 from busdelay.data import load_part
 from busdelay.explain import REASONS, main_reason, reason_contributions
 from busdelay.features import FEATURES, build_features
-from busdelay.model import TrainConfig, train
+from busdelay.model import TrainConfig, blend, train
 from world import write_dataset
 
 SMALL = {"iterations": 40, "depth": 3, "learning_rate": 0.2, "folds": 3, "classifier": False}
@@ -25,9 +25,14 @@ def test_every_feature_has_exactly_one_reason():
     assert sorted(grouped) == sorted(FEATURES)
 
 
-@pytest.mark.parametrize("residual", [True, False])
-def test_reasons_add_up_to_the_prediction(table, residual):
-    model, _, _ = train(table, TrainConfig(**SMALL, residual=residual))
+@pytest.mark.parametrize("kind", ["residual", "plain", "blend"])
+def test_reasons_add_up_to_the_prediction(table, kind):
+    if kind == "blend":
+        members = [train(table, TrainConfig(**SMALL, residual=r)) for r in (True, False)]
+        model, _, _ = blend([m for m, _, _ in members], [o for _, _, o in members], [0.5, 0.5])
+        assert model.baseline_weight == 0.5
+    else:
+        model, _, _ = train(table, TrainConfig(**SMALL, residual=kind == "residual"))
     parts = reason_contributions(model, table)
     total = parts[list(REASONS)].sum(axis=1) + parts["expected_s"]
     np.testing.assert_allclose(total, model.predict(table)["delay_s"], atol=1e-6)

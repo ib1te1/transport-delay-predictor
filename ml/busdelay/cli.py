@@ -7,6 +7,7 @@ Commands:
 * ``baselines`` - cross-validate the simple predictors
 * ``submit-baseline`` - fit one baseline on all labeled points and write a submission
 * ``train`` - cross-validate CatBoost, then fit it on all labeled points and save it
+* ``blend`` - average models trained on the same points into one model
 * ``predict`` - predict validate with a saved model and write a submission
 * ``bench`` - replay validate telemetry through the live predictor and time it
 * ``check`` - check a submission file against ``validate/points.csv``
@@ -28,7 +29,7 @@ from .data import FILES, PARTS, is_synthetic, load_part, read_points
 from .features import build_features, read_feature_table
 from .folds import block_ids, group_folds
 from .metrics import summary
-from .model import OOF_FILE, DelayModel, TrainConfig, train
+from .model import HINTS, DelayModel, TrainConfig, blend, train
 from .online import LivePredictor
 from .schedule import prepare_plan, split_by_vehicle
 from .submission import check_submission, write_submission
@@ -36,6 +37,8 @@ from .submission import check_submission, write_submission
 DEFAULT_DATA = Path("../data/dataset")
 DEFAULT_FEATURES = Path("../data/features")
 DEFAULT_MODELS = Path("../models")
+# out-of-fold predictions hold the labels, so they stay in data/ and not next to the model
+DEFAULT_OOF = Path("../data/oof")
 DEFAULT_SUBMISSIONS = Path("../data/submissions")
 
 
@@ -48,12 +51,23 @@ def cmd_features(args) -> int:
         path = args.out / f"{name}.parquet"
         table.to_parquet(path, index=False)
         print(f"{name}: {len(table)} points in {time.perf_counter() - started:.1f} s -> {path}")
-        if name == "test":
+        if name != "validate":
             # the same points with cur_dev_s estimated from GPS, as on the live stream
             stream = build_features(part.points, part.plan, part.telemetry, hint="gps")
-            stream.to_parquet(args.out / "test_stream.parquet", index=False)
-            print(f"test_stream: {len(stream)} points, cur_dev_s from GPS")
+            stream.to_parquet(args.out / f"{name}_stream.parquet", index=False)
+            print(f"{name}_stream: {len(stream)} points, cur_dev_s from GPS")
     return 0
+
+
+def read_labeled(features: Path, parts: list[str], hint: str) -> pd.DataFrame:
+    """Labeled points with the organisers' ``cur_dev_s``, the GPS one, or both (``mix``)."""
+    frames = []
+    if hint in ("given", "mix"):
+        frames.append(read_feature_table(features, parts).assign(hint="given"))
+    if hint in ("gps", "mix"):
+        stream = read_feature_table(features, [f"{part}_stream" for part in parts])
+        frames.append(stream.assign(hint="gps"))
+    return pd.concat(frames, ignore_index=True)
 
 
 def cmd_arrivals(args) -> int:
@@ -114,10 +128,10 @@ def cross_validate(table: pd.DataFrame, make_model, n_folds: int, seed: int) -> 
 
 
 def print_scores(rows: dict[str, dict[str, float]]) -> None:
-    print(f"{'':>31} {'MAE':>7} {'vs pers':>8} {'bias':>7} {'p90':>7} {'score~':>7} {'rows':>6}")
+    print(f"{'':>36} {'MAE':>7} {'vs pers':>8} {'bias':>7} {'p90':>7} {'score~':>7} {'rows':>6}")
     for name, s in rows.items():
         print(
-            f"{name:>31} {s['mae']:7.1f} {s['vs_persistence']:+8.1%} {s['bias']:+7.1f} "
+            f"{name:>36} {s['mae']:7.1f} {s['vs_persistence']:+8.1%} {s['bias']:+7.1f} "
             f"{s['p90']:7.1f} {s['score']:7.2f} {s['rows']:6d}"
         )
 
@@ -173,9 +187,11 @@ def cmd_train(args) -> int:
         group=args.group,
         gpu=args.gpu,
         seed=args.seed,
+        seeds=args.seeds,
+        hint=args.hint,
     )
-    table = read_feature_table(args.features, args.parts)
-    if args.no_synthetic:
+    table = read_labeled(args.features, args.parts, args.hint)
+    if not args.with_synthetic:
         table = table[~table["synthetic"]].reset_index(drop=True)
     test = read_feature_table(args.features, ["test"])
     stream_path = args.features / "test_stream.parquet"
@@ -183,17 +199,48 @@ def cmd_train(args) -> int:
     print(f"training {args.name} on {'+'.join(args.parts)}: {len(table)} points, {config}")
     started = time.perf_counter()
     model, metrics, oof = train(table, config, stream_test=stream, test=test)
-    out = model.save(args.models / args.name)
-    oof.to_parquet(out / OOF_FILE, index=False)
-
+    out = save_model(model, oof, args)
     print(f"\n{config.folds}-fold CV, real vehicles, {metrics['iterations']} trees:")
+    print_report(model, metrics)
+    print(f"\n{time.perf_counter() - started:.0f} s, saved to {out}")
+    print(f"next: python -m busdelay predict --model {out}")
+    return 0
+
+
+def cmd_blend(args) -> int:
+    weights = args.weights or [1 / len(args.model)] * len(args.model)
+    if len(weights) != len(args.model):
+        raise ValueError(f"{len(args.model)} models but {len(weights)} weights")
+    members = [DelayModel.load(path) for path in args.model]
+    oofs = [pd.read_parquet(args.oof / f"{Path(path).name}.parquet") for path in args.model]
+    model, metrics, oof = blend(members, oofs, weights)
+    model.meta["blend"]["names"] = [Path(path).name for path in args.model]
+    out = save_model(model, oof, args)
+    names = ", ".join(f"{Path(p).name} x{w:g}" for p, w in zip(args.model, weights, strict=True))
+    print(f"blend of {names}, out-of-fold predictions of the members, real vehicles:")
+    print_report(model, metrics)
+    print(f"\nsaved to {out}")
+    return 0
+
+
+def save_model(model: DelayModel, oof: pd.DataFrame, args) -> Path:
+    """The model to models/<name>, its out-of-fold predictions to data/oof/<name>.parquet."""
+    out = model.save(args.models / args.name)
+    args.oof.mkdir(parents=True, exist_ok=True)
+    oof.to_parquet(args.oof / f"{args.name}.parquet", index=False)
+    return out
+
+
+def print_report(model: DelayModel, metrics: dict) -> None:
     print_scores(metrics["cv"])
-    print("\nfit on train, scored on test (the organisers' split):")
-    print_scores(metrics["control"])
+    if "control" in metrics:
+        print("\nfit on train, scored on test (the organisers' split):")
+        print_scores(metrics["control"])
     if "late" in metrics:
         late = metrics["late"]
+        trees = f", {metrics['iterations_late']} trees" if "iterations_late" in metrics else ""
         print(
-            f"\nlate > 2 min classifier, {metrics['iterations_late']} trees: "
+            f"\nlate > 2 min classifier{trees}: "
             f"AUC {late['auc']:.3f}, logloss {late['logloss']:.3f}, "
             f"Brier {late['brier']:.3f}, share late {late['positive_rate']:.1%}"
         )
@@ -202,9 +249,6 @@ def cmd_train(args) -> int:
     print("\nmost important features:")
     for name, value in model.importance(15):
         print(f"  {name:>20} {value:6.2f}")
-    print(f"\n{time.perf_counter() - started:.0f} s, saved to {out}")
-    print(f"next: python -m busdelay predict --model {out}")
-    return 0
 
 
 def cmd_predict(args) -> int:
@@ -302,10 +346,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", required=True, help="the model is saved to models/<name>")
     p.add_argument("--features", type=Path, default=DEFAULT_FEATURES)
     p.add_argument("--models", type=Path, default=DEFAULT_MODELS)
+    p.add_argument("--oof", type=Path, default=DEFAULT_OOF, help="out-of-fold predictions")
     p.add_argument("--iterations", type=int, default=3000, help="max trees, the CV picks fewer")
-    p.add_argument("--depth", type=int, default=6)
+    p.add_argument("--depth", type=int, default=4)
     p.add_argument("--lr", type=float, default=0.03)
-    p.add_argument("--l2", type=float, default=3.0)
+    p.add_argument("--l2", type=float, default=30.0)
     p.add_argument("--no-residual", action="store_true", help="learn the delay, not the residual")
     p.add_argument("--vehicle", action="store_true", help="add tr_id as a category")
     p.add_argument("--synthetic-weight", type=float, default=1.0)
@@ -319,6 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
         "route: a real vehicle with its synthetic copies held out",
     )
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seeds", type=int, default=5, help="seeds averaged in the final model")
     p.add_argument("--gpu", action="store_true", help="train on the GPU (CUDA)")
     p.add_argument(
         "--parts",
@@ -328,11 +374,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="labeled parts to train on; with train only, test is just the control",
     )
     p.add_argument(
-        "--no-synthetic",
+        "--hint",
+        choices=HINTS,
+        default="given",
+        help="cur_dev_s to train on: given - the organisers' (for the submission), "
+        "gps - estimated from GPS as on the stream, mix - both (for the service)",
+    )
+    p.add_argument(
+        "--with-synthetic",
         action="store_true",
-        help="drop the synthetic copies of real vehicles from training",
+        help="keep the synthetic copies of real vehicles; off by default, the model then "
+        "finds the copy and takes its delay (docs/specs/ml-model.md)",
     )
     p.set_defaults(func=cmd_train)
+
+    p = commands.add_parser("blend", help="average trained models into one")
+    p.add_argument("--name", required=True, help="the blend is saved to models/<name>")
+    p.add_argument(
+        "--model",
+        type=Path,
+        nargs="+",
+        required=True,
+        help="models/<name> trained on the same points with the same folds",
+    )
+    p.add_argument("--weights", type=float, nargs="+", default=None, help="default: equal")
+    p.add_argument("--models", type=Path, default=DEFAULT_MODELS)
+    p.add_argument("--oof", type=Path, default=DEFAULT_OOF, help="out-of-fold predictions")
+    p.set_defaults(func=cmd_blend)
 
     p = commands.add_parser("predict", help="write a submission with saved models")
     p.add_argument(
