@@ -17,7 +17,7 @@ from redis import Redis
 
 from app.main import create_app
 from app.matching import Settings
-from app.store import START_ID, StateMismatch, Store
+from app.store import START_ID, CursorMoved, StateMismatch, Store
 from common.bus import append
 from common.config import ServiceSettings
 from contracts import StopEvent, TelemetryRecord
@@ -142,7 +142,25 @@ def counts(pool) -> tuple:
     )
 
 
-def test_arrival_restart_departure_and_contract(pool, redis, streams):
+def reset_demo(pool, redis, streams) -> None:
+    """Same as the api reset: every table but the seed's reference data, and the streams."""
+    with pool.connection() as conn:
+        tables = [
+            name
+            for (name,) in conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
+            ).fetchall()
+            if name not in ("vehicles", "stops_plan")
+        ]
+        conn.execute(
+            sql.SQL("TRUNCATE {} RESTART IDENTITY").format(
+                sql.SQL(", ").join(sql.Identifier(t) for t in tables)
+            )
+        )
+    redis.delete(streams.telemetry, streams.events)
+
+
+def test_arrival_restart_departure_and_contract(pool, redis, streams, caplog):
     first = send(redis, streams.telemetry, NOW)
     store = make_store(pool, redis)
     assert store.process_batch() == 1
@@ -151,7 +169,9 @@ def test_arrival_restart_departure_and_contract(pool, redis, streams):
 
     restarted = make_store(pool, redis)
     second = send(redis, streams.telemetry, NOW + timedelta(seconds=20), lon=37.01)
-    assert restarted.process_batch() == 1
+    with caplog.at_level(logging.WARNING, logger="app.store"):
+        assert restarted.process_batch() == 1
+    assert "previous run" not in caplog.text
     assert saved_cursor(pool) == second
     assert all_rows(pool, "SELECT time_fact, available_at, departure FROM stop_events") == [
         (NOW, NOW, NOW + timedelta(seconds=20))
@@ -297,31 +317,67 @@ def test_demo_reset_starts_a_new_run(pool, redis, streams):
         assert store.publish_pending(redis) == 1
 
     run()
-    # Same as the api reset: every table but the seed's reference data.
-    with pool.connection() as conn:
-        tables = [
-            name
-            for (name,) in conn.execute(
-                "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
-            ).fetchall()
-            if name not in ("vehicles", "stops_plan")
-        ]
-        conn.execute(
-            sql.SQL("TRUNCATE {} RESTART IDENTITY").format(
-                sql.SQL(", ").join(sql.Identifier(t) for t in tables)
-            )
-        )
-    redis.delete(streams.telemetry, streams.events)
+    reset_demo(pool, redis, streams)
 
     fresh = make_store(pool, redis)
     fresh.load()
     assert fresh._last_id == START_ID
     quality = fresh.quality()
-    assert (quality["stream_cursor"], quality["stop_events"], quality["lag_ms"]) == (START_ID, 0, 0)
+    assert quality["stream_cursor"] == START_ID
+    assert (quality["stop_events"], quality["unread"], quality["lag_ms"]) == (0, False, None)
 
     run()
     assert counts(pool) == (1, 1, 1, 0)
     assert redis.xlen(streams.events) == 1
+
+
+def test_reset_under_a_running_matcher_reloads_from_the_start(pool, redis, streams):
+    send(redis, streams.telemetry, NOW)
+    store = make_store(pool, redis)
+    assert store.process_batch() == 1
+    reset_demo(pool, redis, streams)
+    send(redis, streams.telemetry, NOW)
+    send(redis, streams.telemetry, NOW + timedelta(seconds=20), lon=37.01)
+
+    with pytest.raises(CursorMoved):
+        store.process_batch()
+    assert store.process_batch() == 2
+    assert store.rejected_late_ticks == 0
+    assert all_rows(pool, "SELECT time_fact, departure FROM stop_events") == [
+        (NOW, NOW + timedelta(seconds=20))
+    ]
+    assert counts(pool) == (1, 1, 1, 1)
+
+
+def test_quality_reports_unread_input_and_lag(pool, redis, streams):
+    store = make_store(pool, redis)
+    first = send(redis, streams.telemetry, NOW)
+    quality = store.quality()
+    assert (quality["stream_last_id"], quality["unread"], quality["lag_ms"]) == (first, True, None)
+    assert store.process_batch() == 1
+    quality = store.quality()
+    assert (quality["stream_cursor"], quality["unread"], quality["lag_ms"]) == (first, False, 0)
+    time.sleep(0.01)
+    send(redis, streams.telemetry, NOW + timedelta(seconds=10))
+    quality = store.quality()
+    assert quality["unread"] and quality["lag_ms"] > 0
+    redis.delete(streams.telemetry)
+    quality = store.quality()
+    assert (quality["stream_last_id"], quality["unread"], quality["lag_ms"]) == (None, False, None)
+
+
+def test_rows_of_a_previous_run_are_reported(pool, redis, streams, caplog):
+    with pool.connection() as conn:
+        conn.execute(
+            "INSERT INTO stop_events (tr_id, stop_id, time_plan, time_fact, delay_s, "
+            "available_at, recovered) VALUES (1, 10, %s, %s, 60, %s, false)",
+            (NOW, NOW + timedelta(minutes=1), NOW + timedelta(minutes=1)),
+        )
+    send(redis, streams.telemetry, NOW)
+    with caplog.at_level(logging.WARNING, logger="app.store"):
+        assert make_store(pool, redis).process_batch() == 1
+    assert "previous run" in caplog.text
+    assert one(pool, "SELECT count(*) FROM matcher_outbox")[0] == 0
 
 
 def test_check_stream_warns_about_a_stream_behind_the_cursor(pool, redis, streams, caplog):
@@ -380,5 +436,9 @@ def test_service_workers_publish_event_visible_to_api_reader(
         entries = redis.xrange(streams.events)
         assert len(entries) == 1
         assert StopEvent.model_validate_json(entries[0][1][b"data"]).tr_id == 1
-        client.app.state.store.failing = True
+        failing = client.app.state.failing
+        failing["input"] = True
         assert client.get("/ready").json() == {"status": "input_failing"}
+        failing.update(input=False, output=True)
+        response = client.get("/ready")
+        assert (response.status_code, response.json()) == (503, {"status": "output_failing"})

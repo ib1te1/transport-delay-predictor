@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -28,6 +29,37 @@ def log_to_stderr() -> None:
         logger.setLevel(logging.INFO)
 
 
+async def keep_running(
+    step: Callable[[], int],
+    failing: dict[str, bool],
+    name: str,
+    base_delay: float,
+    *,
+    idle_wait: bool,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Run a blocking step forever; back off on errors and flag them in failing[name].
+
+    With idle_wait the loop sleeps base_delay after a step that did nothing.
+    """
+    delay = base_delay
+    while True:
+        try:
+            done = await asyncio.to_thread(step)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            failing[name] = True
+            log.exception("matcher %s failed; retrying in %.2f s", name, delay)
+            await sleep(delay)
+            delay = min(delay * 2, MAX_RETRY_SEC)
+            continue
+        failing[name] = False
+        delay = base_delay
+        if idle_wait and not done:
+            await sleep(base_delay)
+
+
 def create_app(settings: ServiceSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -40,8 +72,10 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
         store = Store(
             pool, redis, thresholds, batch_size=config.batch_size, block_ms=config.block_ms
         )
+        failing = {"input": False, "output": False}
         app.state.store = store
         app.state.redis = redis
+        app.state.failing = failing
         app.state.tasks = []
         try:
             pool.open(wait=True)
@@ -52,35 +86,22 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
                 raise
             await asyncio.to_thread(store.check_stream)
 
-            async def consume() -> None:
-                delay = config.poll_interval_sec
-                while True:
-                    try:
-                        # XREAD blocks while the stream is idle, so no sleep here.
-                        await asyncio.to_thread(store.process_batch)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        store.failing = True
-                        log.exception("matcher input failed; retrying in %.2f s", delay)
-                        await asyncio.sleep(delay)
-                        delay = min(delay * 2, MAX_RETRY_SEC)
-                        continue
-                    store.failing = False
-                    delay = config.poll_interval_sec
-
-            async def publish() -> None:
-                while True:
-                    try:
-                        if await asyncio.to_thread(store.publish_pending, redis):
-                            continue
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        log.exception("matcher event delivery failed; retrying")
-                    await asyncio.sleep(config.poll_interval_sec)
-
-            tasks = [asyncio.create_task(consume()), asyncio.create_task(publish())]
+            base = config.poll_interval_sec
+            tasks = [
+                # XREAD blocks while the stream is idle, so no extra wait here.
+                asyncio.create_task(
+                    keep_running(store.process_batch, failing, "input", base, idle_wait=False)
+                ),
+                asyncio.create_task(
+                    keep_running(
+                        lambda: store.publish_pending(redis),
+                        failing,
+                        "output",
+                        base,
+                        idle_wait=True,
+                    )
+                ),
+            ]
             app.state.tasks = tasks
             try:
                 yield
@@ -102,8 +123,9 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
     def ready(request: Request):
         if any(task.done() for task in request.app.state.tasks):
             return JSONResponse(status_code=503, content={"status": "worker_stopped"})
-        if request.app.state.store.failing:
-            return JSONResponse(status_code=503, content={"status": "input_failing"})
+        for name, failed in request.app.state.failing.items():
+            if failed:
+                return JSONResponse(status_code=503, content={"status": f"{name}_failing"})
         try:
             request.app.state.store.ready()
             request.app.state.redis.ping()

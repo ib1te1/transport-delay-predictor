@@ -43,9 +43,15 @@ def _json_value(value: object) -> object:
     return json.loads(json.dumps(value, default=lambda item: item.isoformat()))
 
 
+def _value(value: object) -> str:
+    if isinstance(value, int | float):
+        return f"{float(value):g}"
+    return "missing" if value is None else str(value)
+
+
 def _mismatch(saved: dict, configured: dict) -> str:
     changed = ", ".join(
-        f"{name}: saved {saved.get(name)}, configured {configured.get(name)}"
+        f"{name}: saved {_value(saved.get(name))}, configured {_value(configured.get(name))}"
         for name in sorted(saved.keys() | configured.keys())
         if saved.get(name) != configured.get(name)
     )
@@ -55,10 +61,15 @@ def _mismatch(saved: dict, configured: dict) -> str:
     )
 
 
-def _write_event(conn, event) -> None:
+def _write_event(conn, event) -> bool:
+    """Store a new event with its outbox row, or add the departure to a stored one.
+
+    Returns False when a stored row has another arrival: a row of an earlier run.
+    """
     key = (int(event.vehicle_id), int(event.visit_id), event.planned_at)
     existing = conn.execute(
-        "SELECT 1 FROM stop_events WHERE tr_id = %s AND stop_id = %s AND time_plan = %s", key
+        "SELECT time_fact FROM stop_events WHERE tr_id = %s AND stop_id = %s AND time_plan = %s",
+        key,
     ).fetchone()
     if existing:
         conn.execute(
@@ -66,7 +77,7 @@ def _write_event(conn, event) -> None:
             "WHERE tr_id = %s AND stop_id = %s AND time_plan = %s",
             (event.departure, *key),
         )
-        return
+        return existing[0] == event.arrival
     conn.execute(
         "INSERT INTO stop_events "
         "(tr_id, stop_id, time_plan, time_fact, delay_s, available_at, departure, recovered) "
@@ -91,6 +102,7 @@ def _write_event(conn, event) -> None:
         "INSERT INTO matcher_outbox (payload) VALUES (%s)",
         (Jsonb(contract.model_dump(mode="json")),),
     )
+    return True
 
 
 class Store:
@@ -108,7 +120,6 @@ class Store:
         self.settings = settings
         self.batch_size = batch_size
         self.block_ms = block_ms
-        self.failing = False
         self.detector: StopDetector | None = None
         self.vehicles: dict[int, int] = {}
         self.planned: set[int] = set()
@@ -172,7 +183,9 @@ class Store:
         counts: Counter[str] = Counter()
         try:
             with self.pool.connection() as conn, conn.transaction():
-                row = conn.execute("SELECT stream_id FROM matcher_cursor FOR UPDATE").fetchone()
+                # FOR UPDATE locks nothing before the first cursor row exists.
+                conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('matcher:input', 0))")
+                row = conn.execute("SELECT stream_id FROM matcher_cursor").fetchone()
                 saved = row[0] if row else START_ID
                 if saved != self._last_id:
                     raise CursorMoved(f"saved cursor is {saved}, expected {self._last_id}")
@@ -184,8 +197,14 @@ class Store:
                         self.detector.feed(tick)
                         touched.add(tick.vehicle_id)
                 late = self.detector.rejected_late_ticks - late
-                for event in self.detector.drain_events():
-                    _write_event(conn, event)
+                stale = [e for e in self.detector.drain_events() if not _write_event(conn, e)]
+                if stale:
+                    log.warning(
+                        "%d stop events collide with stored rows of another arrival: the "
+                        "database holds a previous run. Reset the demo with %s",
+                        len(stale),
+                        RESET_HINT,
+                    )
                 self._save_state(conn, touched)
                 self._save_cursor(conn, last_id)
         except Exception:
@@ -210,10 +229,12 @@ class Store:
         if tr_id not in self.planned:
             self._skip(counts, "unplanned", tr_id, "no planned stops for vehicle %s", tr_id)
             return None
-        if not record.location_valid or record.lon is None or record.lat is None:
+        tick = Tick(str(tr_id), record.event_time, record.lon, record.lat, record.speed_kmh)
+        if not record.location_valid or not tick.valid:
             counts["invalid_location"] += 1
-            return None
-        return Tick(str(tr_id), record.event_time, record.lon, record.lat, record.speed_kmh)
+            # The detector keeps only its time, so later duplicates count as late.
+            return Tick(tick.vehicle_id, tick.at, None, None, tick.speed)
+        return tick
 
     def _skip(self, counts: Counter, kind: str, key: object, message: str, *args) -> None:
         counts[kind] += 1
@@ -288,33 +309,35 @@ class Store:
     def quality(self) -> dict:
         with self.pool.connection() as conn:
             row = conn.execute("SELECT stream_id FROM matcher_cursor").fetchone()
-            planned, events, pending = conn.execute(
+            planned, events, outbox = conn.execute(
                 "SELECT (SELECT count(*) FROM stops_plan), (SELECT count(*) FROM stop_events), "
                 "(SELECT count(*) FROM matcher_outbox)"
             ).fetchone()
         cursor = row[0] if row else START_ID
-        last_id, lag_ms = self._lag(cursor)
         return {
             "stream_cursor": cursor,
-            "stream_last_id": last_id,
-            "lag_ms": lag_ms,
+            **self._stream_position(cursor),
             "planned_visits": planned,
             "stop_events": events,
-            "outbox_pending": pending,
+            "outbox_pending": outbox,
             "rejected_late_ticks": self.rejected_late_ticks,
             "skipped": {kind: self.skipped[kind] for kind in SKIP_KINDS},
         }
 
-    def _lag(self, cursor: str) -> tuple[str | None, int | None]:
-        """Newest entry id and how much older, by append time, the cursor entry is."""
+    def _stream_position(self, cursor: str) -> dict:
+        """Stream end against the cursor; None where Redis cannot tell."""
         try:
             newest = self.redis.xrevrange(TELEMETRY_STREAM, count=1)
-            if not newest:
-                return None, 0
-            last_id = _decode(newest[0][0])
-            if cursor == START_ID:
-                oldest = self.redis.xrange(TELEMETRY_STREAM, count=1)
-                cursor = _decode(oldest[0][0]) if oldest else last_id
         except RedisError:
-            return None, None
-        return last_id, max(0, _id_key(last_id)[0] - _id_key(cursor)[0])
+            return {"stream_last_id": None, "unread": None, "lag_ms": None}
+        if not newest:
+            return {"stream_last_id": None, "unread": False, "lag_ms": None}
+        last_id = _decode(newest[0][0])
+        last, done = _id_key(last_id), _id_key(cursor)
+        # No lag before the first batch or when the stream is behind the cursor.
+        known = cursor != START_ID and last >= done
+        return {
+            "stream_last_id": last_id,
+            "unread": last > done,
+            "lag_ms": last[0] - done[0] if known else None,
+        }
