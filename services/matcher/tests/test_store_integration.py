@@ -1,18 +1,23 @@
 """Contract and recovery checks against the migrated PostgreSQL and Redis."""
 
 import os
+import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
 import pytest
+from fastapi.testclient import TestClient
 from psycopg import sql
 from psycopg_pool import ConnectionPool
 from redis import ConnectionError as RedisConnectionError
 from redis import Redis
 
+from app.main import create_app
 from app.matching import Settings
 from app.store import Store
+from common.config import ServiceSettings
 from contracts import StopEvent
 
 NOW = datetime(2026, 1, 6, 12, tzinfo=UTC)
@@ -156,3 +161,38 @@ def test_recovered_pass_through_is_published_only_after_confirmation(store: Stor
         NOW + timedelta(seconds=20),
         True,
     )
+
+
+def test_service_workers_publish_event_visible_to_api_reader(store: Store, monkeypatch):
+    class PoolProxy:
+        def open(self, *, wait):
+            pass
+
+        def close(self):
+            pass
+
+        def connection(self):
+            return store.pool.connection()
+
+    monkeypatch.setattr("app.main.make_pool", lambda _: PoolProxy())
+    stream = "matcher-test-" + uuid4().hex
+    monkeypatch.setattr("app.store.STOP_EVENTS_STREAM", stream)
+    telemetry(store, NOW)
+    url = infrastructure_url("REDIS_URL")
+    config_path = Path(__file__).resolve().parents[3] / "config" / "system.yaml"
+    runtime = ServiceSettings(
+        database_url="unused", redis_url=url, config_path=config_path, _env_file=None
+    )
+    with Redis.from_url(url) as redis:
+        try:
+            with TestClient(create_app(runtime)) as client:
+                deadline = time.monotonic() + 5
+                while redis.xlen(stream) == 0 and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                assert client.get("/ready").status_code == 200
+                assert client.get("/quality").json()["stop_events"] == 1
+                entries = redis.xrange(stream)
+                assert len(entries) == 1
+                assert StopEvent.model_validate_json(entries[0][1][b"data"]).tr_id == 1
+        finally:
+            redis.delete(stream)
