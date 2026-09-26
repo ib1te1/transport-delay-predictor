@@ -61,3 +61,59 @@ cd services/api && ../../.venv/Scripts/python -m pytest
 ```bash
 docker compose run --rm seed
 ```
+
+## Подача телеметрии
+
+Обычный `docker compose up --build` поднимает сервис `ingest`, но не
+запускает проигрывание CSV. При `ingest.mode: replay` после готовности
+сервисов отдельно выполните:
+
+```bash
+docker compose --profile replay run --rm replay
+```
+
+Проигрыватель читает `data/dataset/<replay.period>/traffic.csv`, сортирует
+точки по времени и сохраняет их в Postgres перед публикацией в Redis Stream
+`telemetry`. `replay.period` должен совпадать с `seed.period`. `speedup`,
+включительные границы `start_at` и `end_at` задаются в `config/system.yaml`.
+Прерванный прогон возобновляется той же командой после отправки накопившихся
+записей. Завершённый прогон команда не повторяет: она ничего не публикует,
+пишет в лог подсказку и завершается с кодом 3. Для нового демо-прогона
+выполните `scripts/reset-demo.sh` (в PowerShell — `scripts/reset-demo.ps1`):
+скрипт очищает состояние всех сервисов и печатает команду запуска
+проигрывателя.
+
+Проверить сохранённые строки и очередь отправки можно так:
+
+```bash
+docker compose exec postgres psql -U delay_predictor -d delay_predictor -c "SELECT count(*) AS total, count(*) FILTER (WHERE published_at IS NULL) AS pending FROM telemetry"
+docker compose exec redis redis-cli XLEN telemetry
+```
+
+Для проверки TCP/NDTP переключите `ingest.mode` в `emulator` и задайте
+`ingest.ndtp.dataset_anchor` временем выбранного периода в UTC, например
+`2026-01-06T12:30:00Z` для тестовой раздачи. После смены режима перезапустите
+стек. Образ эмулятора поставляется в раздаче и загружается отдельно:
+
+```bash
+docker compose down -v
+docker load -i data/dataset/ndtp-telemetry-emulator.tar
+docker compose --profile emulator up --build -d
+curl http://localhost:18080/api/cells
+```
+
+Эмулятор подключается к `ingest:9201` внутри сети Compose. Его конфиг
+хранится в памяти: после каждого запуска отправьте его снова. Например,
+для одного терминала из тестового периода:
+
+```bash
+curl -X POST http://localhost:18080/api/config \
+  -H 'Content-Type: application/json' \
+  -d '{"targetHost":"ingest","targetPort":9201,"units":[{"unitId":664030,"intervalMs":5000,"autoGenerate":true,"cells":[]}]}'
+```
+
+Остановить передачу можно конфигом с `"units":[]` или командой
+`docker compose --profile emulator down`. При смене периода или режима
+используйте `docker compose down -v` перед новым запуском: это удаляет
+локальный том Postgres и временный Redis Stream. Исходный датасет не
+удаляется.

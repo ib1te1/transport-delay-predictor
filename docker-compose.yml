@@ -89,15 +89,55 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
-  # The NDTP listener port is added here by the ingest track.
+  # Clears the run: every table but seed's reference data, and Redis.
+  # Opt-in and never on its own: api and matcher keep state in memory,
+  # so scripts/reset-demo stops them around it.
+  reset:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    command: ["python", "-m", "app.reset"]
+    profiles: ["reset"]
+    environment: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   ingest:
     <<: *backend
+    image: transport-delay-predictor-ingest:local
     build:
       context: .
       dockerfile: services/ingest/Dockerfile
     # Debug access only, always local.
     ports:
       - "127.0.0.1:8001:8000"
+      - "127.0.0.1:${NDTP_HOST_PORT:-9201}:9201"
+
+  # Replay is deliberately opt-in: compose up must not restart the dataset
+  # clock at the beginning of the file after every service restart.
+  replay:
+    <<: *backend
+    profiles: ["replay"]
+    image: transport-delay-predictor-ingest:local
+    command: ["python", "-m", "app.replay"]
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  # Load the supplied image separately with docker load. Its REST config
+  # points at ingest:9201 on the same compose network.
+  emulator:
+    image: ndtp-telemetry-emulator:1.0
+    profiles: ["emulator"]
+    depends_on:
+      ingest:
+        condition: service_started
+    ports:
+      - "127.0.0.1:18080:18080"
 
   matcher:
     <<: *backend
