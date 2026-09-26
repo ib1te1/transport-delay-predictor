@@ -59,7 +59,7 @@ jobs:
             {"name": "api", "dir": "services/api", "requirements": "services/api/requirements.txt", "paths": "^services/api/"},
             {"name": "ingest", "dir": "services/ingest", "requirements": "services/ingest/requirements.txt", "paths": "^services/ingest/"},
             {"name": "matcher", "dir": "services/matcher", "requirements": "services/matcher/requirements.txt", "paths": "^services/matcher/"},
-            {"name": "predictor", "dir": "services/predictor", "requirements": "services/predictor/requirements.txt", "paths": "^services/predictor/"},
+            {"name": "predictor", "dir": "services/predictor", "requirements": "services/predictor/requirements.txt", "packages": "-e ml", "paths": "^(services/predictor/|ml/busdelay/|ml/pyproject[.]toml$|models/current/)"},
             {"name": "common", "dir": "packages/common", "requirements": "services/api/requirements.txt", "check_migrations": true, "paths": "^services/api/requirements[.]txt$"},
             {"name": "contracts", "dir": "packages/contracts", "requirements": "services/api/requirements.txt", "paths": "^packages/contracts/"}
           ]'
@@ -164,7 +164,8 @@ jobs:
             migrations/requirements.txt
             requirements-dev.txt
       - run: pip install -r ${{ matrix.requirements }} -r migrations/requirements.txt -r requirements-dev.txt
-      - run: pip install --no-deps -e packages/contracts -e packages/common
+      # packages: the delay model for predictor; the others do not have its pins
+      - run: pip install --no-deps -e packages/contracts -e packages/common ${{ matrix.packages }}
       - run: pip check
       - name: Single migration head
         if: matrix.check_migrations

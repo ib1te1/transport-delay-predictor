@@ -4,7 +4,11 @@
 *
 !packages/
 !services/
+# the delay model package, installed into the predictor image
+!ml/pyproject.toml
+!ml/busdelay/
 
+**/.venv/
 **/__pycache__/
 **/*.py[cod]
 **/.pytest_cache/
