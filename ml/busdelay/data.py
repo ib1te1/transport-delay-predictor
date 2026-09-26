@@ -95,6 +95,9 @@ def read_telemetry(path: Path | str) -> pd.DataFrame:
 def clean_telemetry(raw: pd.DataFrame) -> pd.DataFrame:
     """Normalise raw telemetry rows.
 
+    ``raw`` has ``tr_id, event_time, location_valid, lat, lon, speed``; time may come as
+    ``t`` in seconds since the epoch instead of ``event_time`` (the live service does that).
+
     Returns columns ``tr_id, t, ok, lat, lon, speed`` sorted by vehicle and time. ``ok`` marks
     fixes with usable coordinates. Bad rows are kept with empty coordinates because the share
     of bad fixes is used as a feature.
@@ -119,7 +122,7 @@ def clean_telemetry(raw: pd.DataFrame) -> pd.DataFrame:
     df = pd.DataFrame(
         {
             "tr_id": raw["tr_id"].astype("int64").to_numpy(),
-            "t": to_seconds(raw["event_time"]),
+            "t": raw["t"].to_numpy(dtype=float) if "t" in raw else to_seconds(raw["event_time"]),
             "ok": ok,
             "lat": lat,
             "lon": lon,
