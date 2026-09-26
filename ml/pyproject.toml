@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "busdelay"
+version = "0.3.0"
+description = "Bus delay model: features, training and inference."
+requires-python = "==3.13.*"
+# What inference needs, as compatible ranges; the exact versions are pinned in
+# ml/requirements.txt (training) and services/predictor/requirements.txt (the service).
+dependencies = [
+  "catboost>=1.2.10,<1.3",
+  "numpy>=2.5,<3",
+  "pandas>=3.0,<4",
+]
+
+# Feature tables are written as parquet, only the training commands need it.
+[project.optional-dependencies]
+train = ["pyarrow>=25,<26"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["busdelay"]

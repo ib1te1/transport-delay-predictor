@@ -42,7 +42,7 @@ def test_repository_config_loads() -> None:
     ingest, _dataset = load_ingest_config(SYSTEM_YAML)
     replay, _dataset = load_replay_config(SYSTEM_YAML)
     assert ingest.mode == "replay"
-    assert replay.period == "test"
+    assert replay.period == "validate"
 
 
 @pytest.mark.parametrize(

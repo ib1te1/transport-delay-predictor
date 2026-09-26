@@ -27,6 +27,12 @@ COPY packages /packages
 RUN pip install --no-cache-dir --no-deps /packages/contracts /packages/common \
     && pip check
 
+# The delay model code (features, model, reasons), the same the submission is
+# built with. The trained model itself is mounted from models/ (MODEL_DIR).
+COPY ml/pyproject.toml /ml/pyproject.toml
+COPY ml/busdelay /ml/busdelay
+RUN pip install --no-cache-dir --no-deps /ml && pip check
+
 COPY services/predictor/app ./app
 
 EXPOSE 8000
