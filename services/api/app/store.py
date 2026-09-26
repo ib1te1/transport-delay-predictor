@@ -1,8 +1,10 @@
-"""Postgres side of the prediction loop: the plan in, prediction rows out.
+"""Postgres side of api: the plan in, prediction rows out and back.
 
-Synchronous like the rest of ``common.db``; the loop calls these through
-``asyncio.to_thread``.
+Synchronous like the rest of ``common.db``; callers on the event loop go
+through ``asyncio.to_thread``.
 """
+
+from datetime import datetime
 
 import psycopg
 
@@ -25,10 +27,52 @@ def load_plan(conn: psycopg.Connection) -> PlanIndex:
     return plan
 
 
-def save_predictions(conn: psycopg.Connection, rows: list[PredictionRow]) -> None:
-    """Insert prediction rows; does not commit.
+def save_predictions(conn: psycopg.Connection, rows: list[PredictionRow]) -> list[PredictionRow]:
+    """Insert prediction rows that are not already stored; does not commit.
 
     A ``sample_id`` already stored keeps its first row: a tick repeated
-    after a restart must not rewrite a prediction already shown.
+    after a restart must not rewrite a prediction already shown. Returns
+    the rows that were inserted, in input order — for a ``sample_id``
+    repeated within the batch, only its first row.
     """
+    if not rows:
+        return []
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT sample_id FROM predictions WHERE sample_id = ANY(%s)",
+            ([row.sample_id for row in rows],),
+        )
+        seen = {sample_id for (sample_id,) in cur.fetchall()}
     insert_models(conn, "predictions", rows, on_conflict="ON CONFLICT (sample_id) DO NOTHING")
+    saved = []
+    for row in rows:
+        if row.sample_id not in seen:
+            saved.append(row)
+            seen.add(row.sample_id)
+    return saved
+
+
+def load_latest_predictions(conn: psycopg.Connection, since: datetime) -> list[PredictionRow]:
+    """The newest prediction of each vehicle made at ``since`` or later, by ``tr_id``.
+
+    Restores the current predictions after a restart; whether each still
+    applies is decided by the caller.
+    """
+    return fetch_models(
+        conn,
+        PredictionRow,
+        "SELECT DISTINCT ON (tr_id) * FROM predictions WHERE t >= %s ORDER BY tr_id, t DESC",
+        (since,),
+    )
+
+
+def load_vehicle_predictions(
+    conn: psycopg.Connection, tr_id: int, since: datetime
+) -> list[PredictionRow]:
+    """The vehicle's predictions made at ``since`` or later, newest first."""
+    return fetch_models(
+        conn,
+        PredictionRow,
+        "SELECT * FROM predictions WHERE tr_id = %s AND t >= %s ORDER BY t DESC",
+        (tr_id, since),
+    )

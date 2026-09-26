@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 FALLBACK_MODEL_VERSION = "fallback"
 
 type Predict = Callable[[Sequence[PredictRequest]], Awaitable[list[PredictResponse]]]
+type Save = Callable[[list[PredictionRow]], Awaitable[list[PredictionRow]]]
 type Sink = Callable[[list[PredictionRow]], Awaitable[None]]
 
 
@@ -79,14 +80,16 @@ async def run_tick(
     config: ApiConfig,
     *,
     predict: Predict,
-    save: Sink,
+    save: Save,
     publish: Sink,
 ) -> list[PredictionRow]:
     """Score every candidate at ``t`` in one batch.
 
     If predictor fails, the whole batch falls back to the current
     deviation; the next tick tries predictor again. Rows are saved before
-    they are published, so a reader of the stream finds them in the table.
+    they are published, so a reader of the stream finds them in the
+    table; a row whose ``sample_id`` was already stored is not published
+    again.
     """
     state.prune()
     candidates = plan_tick(state, plan, t, config)
@@ -104,6 +107,9 @@ async def run_tick(
         to_row(c, a, fallback=fallback, config=config)
         for c, a in zip(candidates, answers, strict=True)
     ]
-    await save(rows)
-    await publish(rows)
+    saved = await save(rows)
+    if len(saved) < len(rows):
+        log.info("%d prediction row(s) already stored; not published again", len(rows) - len(saved))
+    if saved:
+        await publish(saved)
     return rows

@@ -45,6 +45,12 @@ def test_api_config_accepts_equal_time_limits():
     config = ApiConfig(
         stale_after_sec=900,
         drop_after_sec=900,
+        card_track_sec=900,
         request=RequestConfig(telemetry_window_sec=900),
     )
     assert config.drop_after_sec == 900
+
+
+def test_api_config_rejects_a_card_track_longer_than_the_telemetry_window():
+    with pytest.raises(ValidationError, match="got 2000, 1800"):
+        ApiConfig(card_track_sec=2000)
