@@ -1,4 +1,7 @@
-"""Matcher checkpoint, stop events and delivery outbox.
+"""Matcher stream cursor, checkpoint, stop events and delivery outbox.
+
+No cursor row means nothing is processed yet: the matcher reads the
+telemetry stream from its start and inserts the row with the first batch.
 
 Revision ID: 0004
 Revises: 0003
@@ -17,9 +20,10 @@ def upgrade() -> None:
         """
         CREATE TABLE matcher_cursor (
             id boolean PRIMARY KEY DEFAULT true CHECK (id),
-            last_telemetry_id bigint NOT NULL DEFAULT 0
+            stream_id text NOT NULL,
+            settings jsonb NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now()
         );
-        INSERT INTO matcher_cursor (id) VALUES (true);
 
         CREATE TABLE matcher_state (
             tr_id bigint PRIMARY KEY,

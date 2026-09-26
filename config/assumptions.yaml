@@ -1,5 +1,6 @@
-# Dataset-dependent detector thresholds. A change after processing telemetry
-# requires a fresh replay because checkpoints include these values.
+# Dataset-dependent detector thresholds. The matcher saves them with its
+# checkpoint: a change after telemetry was processed stops the matcher at
+# startup. Restore the saved values or reset the demo (scripts/reset-demo).
 matcher:
   stop_radius_m: 50
   stopped_speed_kmh: 5

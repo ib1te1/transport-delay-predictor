@@ -10,6 +10,8 @@ from common.config import StrictModel, load_section
 
 class MatcherConfig(StrictModel):
     poll_interval_sec: float = Field(default=0.25, gt=0, le=60)
+    batch_size: int = Field(default=500, ge=1, le=10_000)
+    block_ms: int = Field(default=1000, ge=1, le=60_000)
 
 
 class MatcherAssumptions(StrictModel):

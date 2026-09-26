@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 
 import pytest
@@ -82,3 +83,40 @@ def test_gap_does_not_invent_departure_or_recovered_arrival(speed):
         assert detector.events[0].departure is None
     else:
         assert not detector.events
+
+
+def test_snapshot_restore_mid_sequence_gives_same_events():
+    passed = Visit("bus", "pass", NOW + timedelta(minutes=5), 37.05, 55.0)
+    visits = [visit(), passed, visit(vehicle="other")]
+    ticks = [
+        tick(0, speed=20),
+        tick(10),
+        tick(20, lon=37.01),
+        tick(300, lon=37.0503, speed=30),
+        tick(310, lon=37.05, speed=30),
+        tick(320, lon=37.06, speed=30),
+        tick(5, vehicle="other"),
+    ]
+
+    def run(split):
+        detector = StopDetector(visits, SETTINGS)
+        events = []
+        for index, item in enumerate(ticks):
+            if index == split:
+                saved = {
+                    v: json.loads(json.dumps(detector.snapshot(v), default=datetime.isoformat))
+                    for v in ("bus", "other")
+                }
+                events += detector.drain_events()
+                detector = StopDetector(visits, SETTINGS)
+                for vehicle, state in saved.items():
+                    detector.restore(vehicle, state)
+            detector.feed(item)
+        # Stored rows are keyed by visit; a later event only adds the departure.
+        return {(e.vehicle_id, e.visit_id): e for e in events + detector.drain_events()}
+
+    expected = run(None)
+    assert set(expected) == {("bus", "stop"), ("bus", "pass"), ("other", "stop")}
+    assert expected[("bus", "pass")].recovered
+    for split in range(1, len(ticks)):
+        assert run(split) == expected, split
