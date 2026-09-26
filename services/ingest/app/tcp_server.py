@@ -67,6 +67,17 @@ def _count_cell_stop(counts: Counter[tuple[str, int]], unit_id: int, stop: CellS
         )
 
 
+def _count_drop(counts: Counter[str], unit_id: int, reason: str) -> None:
+    """Log the first dropped frame of each reason; the rest go into the session summary."""
+    counts[reason] += 1
+    if counts[reason] == 1:
+        log.warning(
+            "dropping NDTP frame from %d: %s; repeats are counted until the connection closes",
+            unit_id,
+            reason,
+        )
+
+
 async def serve_client(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
@@ -81,6 +92,7 @@ async def serve_client(
     ordinal = 0
     unit_id: int | None = None
     cell_stops: Counter[tuple[str, int]] = Counter()
+    dropped: Counter[str] = Counter()
     try:
         first = await read_frame(
             reader, max_frame_bytes=config.max_frame_bytes, timeout_sec=config.read_timeout_sec
@@ -111,11 +123,11 @@ async def serve_client(
                     vehicles=vehicles,
                 )
                 if result.record is None:
-                    log.warning("dropping NDTP packet from %d: %s", unit_id, result.reason)
+                    _count_drop(dropped, unit_id, result.reason or "invalid")
                     continue
                 await save(f"{session_id}:{ordinal}", result.record)
             except NdtpError as exc:
-                log.warning("dropping NDTP frame from %d: %s", unit_id, exc.reason)
+                _count_drop(dropped, unit_id, exc.reason)
                 if exc.fatal:
                     return
     except (asyncio.IncompleteReadError, TimeoutError, ConnectionResetError):
@@ -132,6 +144,12 @@ async def serve_client(
                 "NDTP session from %s closed; auxiliary cells skipped: %s",
                 unit_id,
                 _format_counts(cell_stops),
+            )
+        if dropped:
+            log.info(
+                "NDTP session from %s closed; dropped frames: %s",
+                unit_id,
+                _format_counts(dropped),
             )
         writer.close()
         try:

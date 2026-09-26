@@ -90,3 +90,32 @@ async def test_unknown_trailing_cell_keeps_the_point_and_is_logged_once(
     assert "unknown_cell" in warnings[0] and "type 99" in warnings[0]
     infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
     assert any("unknown_cell type 99: 2" in message for message in infos)
+
+
+@pytest.mark.anyio
+async def test_dropped_frames_are_counted_and_logged_once_per_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bad = bytearray(REALTIME)
+    bad[-1] ^= 1
+    reader = asyncio.StreamReader()
+    reader.feed_data(HANDSHAKE + bytes(bad) * 3 + REALTIME)
+    reader.feed_eof()
+    saved: list[tuple[str, TelemetryRecord]] = []
+
+    async def shift_for(_timestamp: int) -> float:
+        return 0
+
+    async def save(source_key: str, record: TelemetryRecord) -> None:
+        saved.append((source_key, record))
+
+    with caplog.at_level(logging.INFO, logger="app.tcp_server"):
+        await serve_client(
+            reader, Writer(), NdtpConfig(), {UNIT: 115106}, shift_for=shift_for, save=save
+        )
+    assert len(saved) == 1
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "crc" in warnings[0]
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("dropped frames: crc: 3" in message for message in infos)
