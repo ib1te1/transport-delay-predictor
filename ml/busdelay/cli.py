@@ -8,7 +8,7 @@ Commands:
 * ``submit-baseline`` - fit one baseline on all labeled points and write a submission
 * ``train`` - cross-validate CatBoost, then fit it on all labeled points and save it
 * ``blend`` - average models trained on the same points into one model
-* ``predict`` - predict validate with a saved model and write a submission
+* ``predict`` - predict validate the way the service does and write a submission
 * ``bench`` - replay validate telemetry through the live predictor and time it
 * ``outage`` - MAE on test with the last minutes of telemetry cut
 * ``check`` - check a submission file against ``validate/points.csv``
@@ -29,6 +29,7 @@ from .baselines import BASELINES
 from .data import FILES, PARTS, is_synthetic, load_part, read_points
 from .features import build_features, read_feature_table
 from .folds import block_ids, group_folds
+from .inference import Forecaster, queries_for_points
 from .metrics import summary
 from .model import HINTS, DelayModel, TrainConfig, blend, train
 from .online import LivePredictor
@@ -267,14 +268,21 @@ def print_report(model: DelayModel, metrics: dict) -> None:
 
 
 def cmd_predict(args) -> int:
-    validate = read_feature_table(args.features, ["validate"])
+    # the service's path: a query per point, then the forecaster, with the organisers'
+    # cur_dev_s that validate has
+    part = load_part(args.data, "validate")
+    queries = queries_for_points(part.points, part.plan, part.telemetry)
+    runs = [Forecaster(DelayModel.load(path), hint="given").predict(queries) for path in args.model]
+    failed = [a for a in runs[0] if a.fallback is not None]
+    if failed:
+        print(
+            f"{len(failed)} points got cur_dev_s instead of the model, first: {failed[0].fallback}"
+        )
     # several models are averaged
-    delay = np.mean(
-        [DelayModel.load(path).predict(validate)["delay_s"] for path in args.model], axis=0
-    )
+    delay = np.mean([[a.delay_s for a in answers] for answers in runs], axis=0)
     name = "+".join(Path(path).name for path in args.model)
     out = args.out or DEFAULT_SUBMISSIONS / f"{name}.csv"
-    path = write_submission(validate["sample_id"], delay, out)
+    path = write_submission([a.sample_id for a in runs[0]], delay, out)
     print(f"{len(delay)} predictions: mean {delay.mean():+.0f} s, median {np.median(delay):+.0f} s")
     return report_check(path, args.data)
 
@@ -459,7 +467,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--model", type=Path, nargs="+", required=True, help="models/<name>, several are averaged"
     )
-    p.add_argument("--features", type=Path, default=DEFAULT_FEATURES)
     p.add_argument("--data", type=Path, default=DEFAULT_DATA)
     p.add_argument("--out", type=Path, default=None, help="default: data/submissions/<name>.csv")
     p.set_defaults(func=cmd_predict)

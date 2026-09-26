@@ -31,7 +31,7 @@ python -m venv .venv
 | `python -m busdelay submit-baseline split_linear` | сабмит из бейзлайна в `data/submissions/` | ~1 с |
 | `python -m busdelay train --name submit_v2` | CatBoost: CV, контроль, финальная модель в `models/submit_v2/` | ~5 мин |
 | `python -m busdelay blend --name current --model <модели>` | среднее нескольких моделей как одна модель | ~5 с |
-| `python -m busdelay predict --model ../models/submit_v2` | сабмит моделью в `data/submissions/submit_v2.csv` | ~2 с |
+| `python -m busdelay predict --model ../models/submit_v2` | сабмит моделью в `data/submissions/submit_v2.csv`, тем же путём, что сервис | ~3 с |
 | `python -m busdelay check <файл>` | проверка формата сабмита | ~1 с |
 | `python -m busdelay bench --model ../models/current` | задержка онлайн-прогноза на телеметрии validate | ~1 мин |
 | `python -m busdelay outage --model ../models/ctl` | MAE на test, когда телеметрия оборвалась за N минут до `T` | ~1 мин |
@@ -123,6 +123,8 @@ meta.json       признаки, настройки, метрики CV, инт�
 хранит между запросами. Признаки те же, что офлайн, одна функция
 `point_features`: на test прогнозы сервисного пути и офлайна совпадают до
 нуля (`tests/test_inference.py` проверяет то же на выдуманных данных).
+Сабмит `predict` считает этим же путём: точки validate становятся
+запросами (`inference.queries_for_points`) с подсказкой организаторов.
 
 Подсказки `cur_dev_s` организаторов на потоке нет, она оценивается по GPS
 (`features.estimate_cur_dev`). Поэтому сервис работает с моделью

@@ -168,10 +168,16 @@ def test_train_and_predict_commands(dataset, tmp_path, capsys):
     assert main(train_args) == 0
     assert (oof_dir / "tiny.parquet").exists()
     assert not (models / "tiny" / "oof.parquet").exists()
-    predict_args = ["predict", "--model", str(models / "tiny"), "--features", str(features)]
-    predict_args += ["--data", str(dataset), "--out", str(out)]
+    predict_args = ["predict", "--model", str(models / "tiny"), "--data", str(dataset)]
+    predict_args += ["--out", str(out)]
     assert main(predict_args) == 0
     assert "ok" in capsys.readouterr().out
+    # the service's path gives what the feature table gives
+    written = pd.read_csv(out, sep=";", dtype={"sample_id": str})
+    validate = pd.read_parquet(features / "validate.parquet")
+    offline = DelayModel.load(models / "tiny").predict(validate)["delay_s"]
+    assert written["sample_id"].tolist() == validate["sample_id"].tolist()
+    np.testing.assert_allclose(written["prediction"], np.round(offline, 1))
 
     mix_args = [*train_args, "--hint", "mix", "--seeds", "2"]
     mix_args[mix_args.index("tiny")] = "mix"
