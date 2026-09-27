@@ -55,6 +55,20 @@ cd services/api && ../../.venv/Scripts/python -m pytest
 базой и Redis пропускаются. Тесты пакета или сервиса запускаются из его
 папки.
 
+Сквозные тесты всей системы идут на запущенном стеке с синтетическим
+датасетом, подробности — в `tests/e2e/README.md`:
+
+```bash
+export COMPOSE_PATH_SEPARATOR=';' COMPOSE_FILE='docker-compose.yml;tests/e2e/docker-compose.e2e.yml'
+docker compose up --build --wait --wait-timeout 300
+.venv/Scripts/python -m pip install -r requirements-dev.txt
+.venv/Scripts/python -m pytest tests/e2e
+docker compose --profile '*' down -v
+```
+
+На Linux/macOS первая строка — без `COMPOSE_PATH_SEPARATOR` и с `:`
+между файлами.
+
 После смены периода в `config/system.yaml` (секция `seed`) справочники
 перезагружаются так:
 
