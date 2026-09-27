@@ -8,6 +8,7 @@ import synthetic
 from conftest import API_URL, MATCHER_URL, Replayed, Stack, expected_stop_events, wait_settled
 
 RUN_TABLES = (
+    "ingest_runs",
     "telemetry",
     "stop_events",
     "predictions",
@@ -31,8 +32,6 @@ def test_reset_clears_the_run_and_keeps_reference_data(stack: Stack, replayed: R
 
     for table in RUN_TABLES:
         assert compose.count(table) == 0, table
-    # ingest in NDTP mode opens an emulator run again as soon as it is back
-    assert compose.count("ingest_runs", "mode = 'replay'") == 0
     for stream in STREAMS:
         assert compose.xlen(stream) == 0, stream
     assert compose.count("stops_plan") == plan

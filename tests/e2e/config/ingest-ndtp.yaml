@@ -1,8 +1,8 @@
-# e2e config of the ingest service only. Same as tests/e2e/config/system.yaml
-# but with the NDTP listener on (ingest.mode: emulator). Replay runs in its
-# own container with the replay config, and the suite plays the dataset
-# before it sends NDTP frames, so the two never move the clock together.
-# The anchor sits one minute after the last synthetic point.
+# e2e config of the ingest service for the NDTP scenario only. Same as
+# tests/e2e/config/system.yaml but with the NDTP listener on (ingest.mode:
+# emulator). The suite switches ingest to it after the replay has finished,
+# so the two sources never run together. The anchor sits one minute after
+# the last synthetic point.
 
 # Runtime settings, one top-level section per service. Each service reads
 # only its own section and rejects unknown keys in it. A value that changes

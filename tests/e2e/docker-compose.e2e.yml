@@ -7,8 +7,9 @@
 # config/system.yaml; config/assumptions.yaml stays the real one. Volumes
 # merge by container path, so /config and /models keep their main mounts.
 #
-# ingest listens for NDTP (mode: emulator) so the suite can send frames,
-# replay plays CSV with its own config (mode: replay).
+# ingest runs in replay mode like in the main config. The NDTP scenario
+# recreates it with E2E_INGEST_CONFIG=ingest-ndtp.yaml (mode: emulator) and
+# puts it back afterwards: the two modes must not run at the same time.
 
 x-e2e-volumes: &e2e-volumes
   - ./tests/e2e/data:/data:ro
@@ -28,4 +29,4 @@ services:
   ingest:
     volumes:
       - ./tests/e2e/data:/data:ro
-      - ./tests/e2e/config/ingest-ndtp.yaml:/config/system.yaml:ro
+      - ./tests/e2e/config/${E2E_INGEST_CONFIG:-system.yaml}:/config/system.yaml:ro

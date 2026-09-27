@@ -4,6 +4,9 @@ Frames are built with the CRC and layouts of services/ingest/app/ndtp.py,
 loaded by path: every service ships a package named ``app``, so it is not
 imported as one. The idle terminal of the synthetic dataset reports three
 new points over two connections, with a damaged frame in between.
+
+The NDTP listener runs only in ingest.mode: emulator, a separate demo mode,
+so ingest is switched to it for this module once the replay is done.
 """
 
 import importlib.util
@@ -13,7 +16,16 @@ from datetime import timedelta
 
 import pytest
 import synthetic
-from conftest import INGEST_URL, NDTP_HOST, NDTP_PORT, ROOT, Replayed, Stack, parse_time, wait_for
+from conftest import (
+    INGEST_URL,
+    NDTP_HOST,
+    NDTP_PORT,
+    ROOT,
+    Replayed,
+    Stack,
+    parse_time,
+    wait_for,
+)
 
 _spec = importlib.util.spec_from_file_location(
     "ingest_ndtp", ROOT / "services" / "ingest" / "app" / "ndtp.py"
@@ -75,7 +87,7 @@ def send_session(*frames: bytes) -> None:
         for data in frames:
             sock.sendall(data)
         sock.shutdown(socket.SHUT_WR)
-        # ingest closes its side after EOF; waiting for it keeps the order of sessions
+        # ingest closes its side after EOF, once every frame is saved
         sock.settimeout(15)
         while sock.recv(1024):
             pass
@@ -88,30 +100,49 @@ def _emulator_rows(stack: Stack) -> list[list[str]]:
     )
 
 
-def test_garbage_is_rejected_without_taking_the_listener_down(
-    stack: Stack, replayed: Replayed
-) -> None:
+def _switch_ingest(stack: Stack, config: str | None) -> None:
+    env = {"E2E_INGEST_CONFIG": config} if config else {}
+    stack.compose.run("up", "-d", "--wait", "--wait-timeout", "120", "ingest", env=env)
+
+
+@pytest.fixture(scope="module")
+def listener(stack: Stack, replayed: Replayed):
+    """ingest recreated in NDTP mode after the replay, and put back to replay mode after."""
+    _switch_ingest(stack, "ingest-ndtp.yaml")
+    yield
+    _switch_ingest(stack, None)
+
+
+def test_garbage_is_rejected_without_taking_the_listener_down(stack: Stack, listener) -> None:
     before = stack.compose.count("telemetry")
-    # returns only once ingest has closed the connection on the bad header
-    send_session(b"not an ndtp frame at all")
+    try:
+        send_session(b"not an ndtp frame at all")
+    except OSError:
+        pass  # the listener may still be starting; the next test waits for it
     assert stack.json(f"{INGEST_URL}/health")["status"] == "ok"
     assert stack.compose.count("telemetry") == before
 
 
-def test_ndtp_frames_land_in_telemetry(stack: Stack, replayed: Replayed) -> None:
+def test_ndtp_frames_land_in_telemetry(stack: Stack, listener) -> None:
     before = len(_emulator_rows(stack))
     damaged = bytearray(navigation(*POINTS[1]))
     damaged[-1] ^= 0xFF
     first, second, third = (navigation(*p) for p in POINTS)
-    send_session(handshake(), first, bytes(damaged), second)
+
+    def first_session_saved() -> bool:
+        # Right after a restart the published port may accept before the
+        # listener runs; such a session saves nothing and is sent again.
+        try:
+            send_session(handshake(), first, bytes(damaged), second)
+        except OSError:
+            return False
+        return len(_emulator_rows(stack)) > before
+
+    wait_for(first_session_saved, "the NDTP listener to take a session", 60, interval=2)
     # a reconnect with a new handshake is the normal path
     send_session(handshake(), third)
 
-    rows = wait_for(
-        lambda: (r := _emulator_rows(stack)) and len(r) >= before + len(POINTS) and r,
-        "NDTP points in the telemetry table",
-        30,
-    )
+    rows = _emulator_rows(stack)
     new = rows[before:]
     assert len(new) == len(POINTS), new
     for row, (offset, lat, lon, speed, course) in zip(new, POINTS, strict=True):
@@ -120,12 +151,16 @@ def test_ndtp_frames_land_in_telemetry(stack: Stack, replayed: Replayed) -> None
         expected_time = synthetic.NDTP_ANCHOR + timedelta(seconds=offset)
         assert parse_time(event_time + "+00:00") == expected_time
         assert [float(v) for v in measured] == pytest.approx([lat, lon, speed, course])
-    assert stack.compose.count("telemetry", "published_at IS NULL") == 0
+    wait_for(
+        lambda: stack.compose.count("telemetry", "published_at IS NULL") == 0,
+        "NDTP points published",
+        30,
+    )
 
 
-def test_ndtp_points_reach_the_stream_and_the_map(stack: Stack, replayed: Replayed) -> None:
+def test_ndtp_points_reach_the_stream_and_the_map(stack: Stack, listener) -> None:
     records = [r for r in stack.compose.stream("telemetry") if r["source"] == "emulator"]
-    assert records and {r["unit_id"] for r in records} == {UNIT}
+    assert len(records) == len(POINTS) and {r["unit_id"] for r in records} == {UNIT}
     last_offset, lat, lon, _speed, _course = POINTS[-1]
     last_seen = synthetic.NDTP_ANCHOR + timedelta(seconds=last_offset)
 

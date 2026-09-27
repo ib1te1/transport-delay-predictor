@@ -84,12 +84,12 @@ class Compose:
         }
 
     def run(
-        self, *args: str, timeout: float = 300, check: bool = True
+        self, *args: str, timeout: float = 300, check: bool = True, env: dict | None = None
     ) -> subprocess.CompletedProcess:
         result = subprocess.run(
             ["docker", "compose", *args],
             cwd=ROOT,
-            env=self.env,
+            env={**self.env, **(env or {})},
             capture_output=True,
             text=True,
             encoding="utf-8",
