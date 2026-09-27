@@ -23,6 +23,9 @@ api:
   predict_timeout_ms: 1000
   # Track length shown in the vehicle card.
   card_track_sec: 1800
+  # Origins the dashboard is served from. With BIND_ADDR=0.0.0.0 add the
+  # address other machines open it by.
+  cors_origins: ["http://localhost:5173", "http://127.0.0.1:5173"]
   # What the model needs, measured on test (docs/specs/ml-model.md): 150
   # minutes of telemetry to see the previous loop, and the plan from the
   # start of the day, where trips are counted from. With 30 minutes and 1

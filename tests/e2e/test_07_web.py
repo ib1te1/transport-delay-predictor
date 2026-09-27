@@ -13,11 +13,6 @@ def test_dashboard_source_uses_the_api(stack: Stack) -> None:
     assert "/api/state" in app.text and "/ws" in app.text
 
 
-@pytest.mark.xfail(
-    reason="api sends no CORS headers, so a page from the web origin cannot read it"
-    " (the browser calls VITE_API_URL, another origin than :5173)",
-    strict=False,
-)
 def test_api_lets_the_dashboard_origin_read_it(stack: Stack) -> None:
     origin = WEB_URL.replace("127.0.0.1", "localhost")
     response = stack.get(f"{API_URL}/api/state", headers={"Origin": origin})
