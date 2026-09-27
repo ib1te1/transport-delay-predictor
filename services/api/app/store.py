@@ -213,6 +213,40 @@ def confirm_alerts(conn: psycopg.Connection, events: Sequence[StopEvent]) -> lis
     )
 
 
+def close_passed_alerts(conn: psycopg.Connection, events: Sequence[StopEvent]) -> list[AlertRow]:
+    """Cancel the open alerts whose target stop the vehicle is already past; returns them.
+
+    A vehicle past its target is one that arrived at a stop planned after
+    it. The target itself had no arrival, or ``confirm_alerts`` would have
+    closed the alert first: its fact is unknown and the alert is cancelled
+    at the earliest such arrival. Without this, an alert whose target
+    arrival the matcher missed would stay open for good, since the
+    vehicle's next forecasts are for other targets.
+    """
+    if not events:
+        return []
+    return fetch_models(
+        conn,
+        AlertRow,
+        "UPDATE alerts a SET status = 'cancelled', closed_at = passed.time_fact"
+        " FROM (SELECT o.id, min(e.time_fact) AS time_fact"
+        "  FROM alerts o"
+        "  JOIN stops_plan s ON s.stop_id = o.target_stop_id"
+        "  JOIN unnest(%s::bigint[], %s::timestamptz[], %s::timestamptz[])"
+        "   AS e(tr_id, time_plan, time_fact)"
+        "   ON e.tr_id = o.tr_id AND e.time_plan > s.time_plan"
+        "  WHERE o.status = 'open'"
+        "  GROUP BY o.id) AS passed"
+        " WHERE a.id = passed.id"
+        " RETURNING a.*",
+        (
+            [e.tr_id for e in events],
+            [e.time_plan for e in events],
+            [e.time_fact for e in events],
+        ),
+    )
+
+
 def load_alerts(
     conn: psycopg.Connection, status: AlertStatus | None = None, limit: int | None = None
 ) -> list[AlertRow]:

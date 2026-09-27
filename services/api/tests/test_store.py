@@ -5,6 +5,7 @@ from app.store import (
     Accuracy,
     AlertCounts,
     check_predictions,
+    close_passed_alerts,
     confirm_alerts,
     count_alerts,
     load_accuracy,
@@ -237,6 +238,44 @@ def test_an_arrival_confirms_the_open_alert_with_its_lead_time(db_conn) -> None:
     assert (confirmed.actual_delay_s, confirmed.lead_time_s) == (400.0, 1120.0)
     assert confirm_alerts(db_conn, [arrival]) == []
     assert [a.status for a in load_alerts(db_conn, limit=None)] == ["cancelled", "confirmed"]
+
+
+def test_an_arrival_past_the_target_cancels_the_alert_the_matcher_left_open(db_conn) -> None:
+    # The local database holds the real seed; this delete is rolled back.
+    db_conn.execute("DELETE FROM alerts")
+    db_conn.execute("DELETE FROM stops_plan")
+    insert_models(
+        db_conn,
+        "stops_plan",
+        [
+            plan_stop(7, 19, at(660)),
+            plan_stop(7, 20, at(720)),
+            plan_stop(7, 23, at(750)),
+            plan_stop(7, 21, at(780)),
+            plan_stop(8, 30, at(1000)),
+        ],
+    )
+    [first] = update_alerts(db_conn, [scored("a", 0)], {})
+    [second] = update_alerts(db_conn, [scored("b", 60, target=21)], {})
+    [other] = update_alerts(
+        db_conn, [scored("c", 0).model_copy(update={"tr_id": 8, "target_stop_id": 30})], {}
+    )
+
+    # a stop before both targets settles nothing; nor does a stop of another vehicle
+    # planned after them, before its own target
+    assert close_passed_alerts(db_conn, [stop_event(7, 19, at(660), at(700))]) == []
+    assert close_passed_alerts(db_conn, [stop_event(8, 99, at(900), at(900))]) == []
+    # past stop 20 without an arrival there: only its alert goes
+    [passed] = close_passed_alerts(
+        db_conn, [stop_event(7, 21, at(780), at(1200)), stop_event(7, 23, at(750), at(1100))]
+    )
+
+    assert (passed.id, passed.status) == (first.id, "cancelled")
+    # the earliest arrival past the target
+    assert passed.closed_at == at(1100)
+    assert (passed.actual_delay_s, passed.lead_time_s) == (None, None)
+    assert {a.id for a in load_alerts(db_conn, "open")} == {second.id, other.id}
+    assert close_passed_alerts(db_conn, []) == []
 
 
 def test_alerts_are_listed_newest_first_and_counted_by_status(db_conn) -> None:

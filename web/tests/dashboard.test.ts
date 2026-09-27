@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { delay } from '../src/format.ts';
 import { nearestPlannedStopKm, networkLines, trackSections } from '../src/network.ts';
-import { applyMessage, mergeHistory, reconcile, SequenceGap, summarize } from '../src/protocol.ts';
-import type { Message, Prediction, Snapshot, Vehicle } from '../src/types.ts';
+import { applyMessage, incidents, mergeHistory, reconcile, SequenceGap, summarize } from '../src/protocol.ts';
+import type { Alert, Message, Prediction, Snapshot, Vehicle } from '../src/types.ts';
 
 const prediction: Prediction = {
   sample_id: 'sample-1', t: '2026-09-27T10:00:00Z', target_stop_id: 8,
@@ -114,4 +114,29 @@ test('GPS track does not connect positions across missing telemetry', () => {
   const sections = trackSections(track, []);
   assert.equal(sections.onRoute.features.length, 0);
   assert.equal(sections.away.features.length, 0);
+});
+
+const alert = (overrides: Partial<Alert>): Alert => ({
+  id: 1, tr_id: 7, target_stop_id: 8, segment_from_stop_id: 5, status: 'open',
+  opened_at: '2026-09-27T10:00:00Z', closed_at: null, predicted_delay_s: 400,
+  reasons: ['accumulated_delay'], actual_delay_s: null, lead_time_s: null, ...overrides,
+});
+
+test('alert messages keep only open alerts in the snapshot', () => {
+  const opened = applyMessage(snapshot, { type: 'alert', data: { seq: 4, alert: alert({}) } });
+  assert.deepEqual(opened.alerts.map(item => item.id), [1]);
+  const updated = applyMessage(opened, { type: 'alert', data: { seq: 5, alert: alert({ predicted_delay_s: 500 }) } });
+  assert.deepEqual(updated.alerts.map(item => item.predicted_delay_s), [500]);
+  const closed = applyMessage(updated, { type: 'alert', data: { seq: 6, alert: alert({ status: 'cancelled', closed_at: '2026-09-27T10:05:00Z' }) } });
+  assert.deepEqual(closed.alerts, []);
+});
+
+test('incidents take the newest open alert of each vehicle, largest delay first', () => {
+  const list = incidents([
+    alert({ id: 1, tr_id: 7, opened_at: '2026-09-27T10:00:00Z', predicted_delay_s: 900 }),
+    alert({ id: 2, tr_id: 7, opened_at: '2026-09-27T10:01:00Z', predicted_delay_s: 350 }),
+    alert({ id: 3, tr_id: 9, opened_at: '2026-09-27T10:00:00Z', predicted_delay_s: 600 }),
+    alert({ id: 4, tr_id: 11, status: 'confirmed', predicted_delay_s: 1200 }),
+  ]);
+  assert.deepEqual(list.map(item => item.id), [3, 2]);
 });
