@@ -171,16 +171,13 @@ def test_alerts_endpoint(stack: Stack, replayed: Replayed) -> None:
     assert len(alerts) == len(stack.state()["alerts"])
 
 
-# Target behaviour from docs/specs/backend-design.md that the api does not
-# implement yet (the endpoint table in §7).
-
-
-@pytest.mark.xfail(reason="backend-design.md §7: GET /api/stops is not implemented", strict=False)
 def test_stops_endpoint(stack: Stack, replayed: Replayed) -> None:
     stops = stack.json(f"{API_URL}/api/stops")
     assert len(stops) == len(synthetic.BUSES) * synthetic.PLANNED_STOPS
 
 
+# Target behaviour from docs/specs/backend-design.md that the api does not
+# implement yet (the endpoint table in §7).
 @pytest.mark.xfail(reason="backend-design.md §7: GET /api/routes is not implemented", strict=False)
 def test_routes_endpoint(stack: Stack, replayed: Replayed) -> None:
     # empty until matcher fills route_shapes, but it must answer

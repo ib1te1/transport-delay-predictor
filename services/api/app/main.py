@@ -22,11 +22,18 @@ from app.schemas import (
     AlertStats,
     AlertView,
     Metrics,
+    NetworkStop,
     StateSnapshot,
     VehicleCard,
     ws_message_schemas,
 )
-from app.store import AlertCounts, count_alerts, load_alerts, load_vehicle_predictions
+from app.store import (
+    AlertCounts,
+    count_alerts,
+    load_alerts,
+    load_network_stops,
+    load_vehicle_predictions,
+)
 from app.views import alert_view
 from app.ws import Hub, relay
 from common.bus import DASHBOARD_CHANNEL
@@ -169,6 +176,20 @@ async def get_state(request: Request) -> StateSnapshot:
     """
     dashboard: Dashboard = request.app.state.dashboard
     return dashboard.snapshot()
+
+
+def _network_stops(pool: ConnectionPool) -> list[NetworkStop]:
+    with pool.connection(timeout=DB_TIMEOUT_SEC) as conn:
+        return load_network_stops(conn)
+
+
+@app.get("/api/stops", responses={503: {"description": "Postgres did not answer"}})
+async def get_stops(request: Request) -> list[NetworkStop]:
+    """Planned network stops. route_id identifies a tr_id run, not a public route number."""
+    try:
+        return await asyncio.to_thread(_network_stops, request.app.state.pool)
+    except (psycopg.Error, TimeoutError) as exc:
+        raise HTTPException(503, "planned stops are not available yet") from exc
 
 
 def _vehicle_predictions(pool: ConnectionPool, tr_id: int, since: datetime) -> list[PredictionRow]:

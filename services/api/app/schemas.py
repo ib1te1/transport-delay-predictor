@@ -155,6 +155,18 @@ class CardStop(BaseModel):
     delay_s: float | None
 
 
+class NetworkStop(BaseModel):
+    """A stop in one planned vehicle run, ordered by planned arrival time."""
+
+    route_id: int
+    stop_order: int
+    stop_id: int
+    address: str | None
+    lat: float
+    lon: float
+    time_plan: AwareDatetime
+
+
 class VehicleCard(BaseModel):
     """One vehicle in detail; ``seq`` and ``clock`` as in the snapshot."""
 

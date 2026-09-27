@@ -13,7 +13,7 @@ from app.dashboard import Dashboard
 from app.live import LiveState
 from app.main import app
 from app.metrics import LoopMetrics
-from app.schemas import ws_message_schemas
+from app.schemas import NetworkStop, ws_message_schemas
 from app.state import FleetState
 from app.store import AlertCounts, save_predictions
 from common.db import connect
@@ -61,6 +61,54 @@ def test_state_returns_the_last_published_snapshot(published: Dashboard) -> None
         "freshness": {"active": 1, "stale": 0, "offline": 0},
     }
     assert (body["alerts"], body["live_mae_s"], body["checked_predictions"]) == ([], None, 0)
+
+
+def test_stops_return_the_planned_network(
+    published: Dashboard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "_network_stops",
+        lambda pool: [
+            NetworkStop(
+                route_id=7,
+                stop_order=1,
+                stop_id=20,
+                address="Lenina 1",
+                lat=55.75,
+                lon=37.62,
+                time_plan=at(720),
+            )
+        ],
+    )
+
+    response = TestClient(app).get("/api/stops")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "route_id": 7,
+            "stop_order": 1,
+            "stop_id": 20,
+            "address": "Lenina 1",
+            "lat": 55.75,
+            "lon": 37.62,
+            "time_plan": "2026-01-06T08:12:00Z",
+        }
+    ]
+
+
+def test_stops_are_503_when_database_is_unavailable(
+    published: Dashboard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def down(pool):
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(main_module, "_network_stops", down)
+
+    response = TestClient(app).get("/api/stops")
+
+    assert response.status_code == 503
 
 
 def test_card_of_an_unknown_vehicle_is_404(published: Dashboard) -> None:
@@ -209,10 +257,13 @@ def test_openapi_describes_the_dashboard_endpoints() -> None:
     card = schema["paths"]["/api/vehicles/{tr_id}"]["get"]["responses"]
     components = schema["components"]["schemas"]
 
+    stops = schema["paths"]["/api/stops"]["get"]["responses"]
+
     assert state["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/StateSnapshot"
     }
     assert {"200", "404", "503"} <= set(card)
+    assert {"200", "503"} <= set(stops)
     alerts = schema["paths"]["/api/alerts"]["get"]["responses"]["200"]
     assert alerts["content"]["application/json"]["schema"]["items"] == {
         "$ref": "#/components/schemas/AlertView"

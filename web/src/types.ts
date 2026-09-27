@@ -32,6 +32,10 @@ export interface CardStop {
   stop_id: number; address: string | null; lat: number; lon: number;
   time_plan: string; time_fact: string | null; delay_s: number | null;
 }
+export interface NetworkStop {
+  route_id: number; stop_order: number; stop_id: number;
+  address: string | null; lat: number; lon: number; time_plan: string;
+}
 export interface VehicleCard {
   seq: number; clock: string | null; vehicle: Vehicle | null;
   predictions: Prediction[]; track: TrackPoint[]; stops: CardStop[];

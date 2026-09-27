@@ -10,6 +10,7 @@ from app.store import (
     load_accuracy,
     load_alerts,
     load_latest_predictions,
+    load_network_stops,
     load_plan,
     load_vehicle_predictions,
     save_predictions,
@@ -33,6 +34,29 @@ def test_load_plan_groups_stops_by_vehicle_in_time_order(db_conn) -> None:
         7: [1, 2],
         8: [3],
     }
+
+
+def test_load_network_stops_numbers_each_run_by_time_then_id(db_conn) -> None:
+    db_conn.execute("DELETE FROM stops_plan")
+    insert_models(
+        db_conn,
+        "stops_plan",
+        [
+            plan_stop(8, 4, at(60)),
+            plan_stop(7, 3, at(120)),
+            plan_stop(7, 2, at(60)),
+            plan_stop(7, 1, at(60)),
+        ],
+    )
+
+    stops = load_network_stops(db_conn)
+
+    assert [(s.route_id, s.stop_order, s.stop_id) for s in stops] == [
+        (7, 1, 1),
+        (7, 2, 2),
+        (7, 3, 3),
+        (8, 1, 4),
+    ]
 
 
 def test_save_predictions_keeps_the_first_row_for_a_sample(db_conn) -> None:

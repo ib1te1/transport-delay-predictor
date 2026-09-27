@@ -4,7 +4,9 @@ import type { GeoJSONSource, Map as MapInstance, Marker } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { hasPosition } from '../protocol';
 import { riskLabels } from '../format';
-import type { Vehicle, VehicleCard } from '../types';
+import { getJson } from '../client';
+import { networkLines } from '../network';
+import type { NetworkStop, Vehicle, VehicleCard } from '../types';
 import { Icon } from './Icon';
 
 interface Props { vehicles: Vehicle[]; selectedId: number | null; card: VehicleCard | null; onSelect: (id: number) => void }
@@ -18,11 +20,14 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
   const [mapError, setMapError] = useState(false);
   const [tileError, setTileError] = useState(false);
   const [basemap, setBasemap] = useState(false);
+  const [network, setNetwork] = useState<NetworkStop[] | null>(null);
+  const [networkError, setNetworkError] = useState(false);
   const located = vehicles.filter(hasPosition);
   const fit = () => {
-    if (!map.current || !located.length) return;
+    if (!map.current || (!located.length && !network?.length)) return;
     const bounds = new maplibregl.LngLatBounds();
-    located.forEach(vehicle => bounds.extend([vehicle.lon!, vehicle.lat!]));
+    if (located.length) located.forEach(vehicle => bounds.extend([vehicle.lon!, vehicle.lat!]));
+    else network?.forEach(stop => bounds.extend([stop.lon, stop.lat]));
     map.current.fitBounds(bounds, { padding: 85, maxZoom: 14, duration: 0 });
   };
   useEffect(() => {
@@ -37,6 +42,8 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
       instance.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
       instance.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');
       instance.on('load', () => {
+        instance.addSource('network', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+        instance.addLayer({ id: 'network-lines', type: 'line', source: 'network', paint: { 'line-color': '#789ba6', 'line-width': 2, 'line-opacity': 0.65 } });
         instance.addSource('track', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         instance.addLayer({ id: 'track-line', type: 'line', source: 'track', paint: { 'line-color': '#16857a', 'line-width': 4, 'line-opacity': 0.7 } });
         instance.addSource('stops', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -50,6 +57,28 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
     const currentMarkers = markers.current;
     return () => { observer.disconnect(); currentMarkers.forEach(marker => marker.remove()); currentMarkers.clear(); instance.remove(); map.current = null; };
   }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    let retry: ReturnType<typeof setTimeout>;
+    const load = async () => {
+      try {
+        const stops = await getJson<NetworkStop[]>('/api/stops', controller.signal);
+        if (!controller.signal.aborted) { setNetwork(stops); setNetworkError(false); }
+      } catch {
+        if (!controller.signal.aborted) {
+          setNetworkError(true);
+          retry = setTimeout(() => void load(), 15000);
+        }
+      }
+    };
+    void load();
+    return () => { controller.abort(); clearTimeout(retry); };
+  }, []);
+  useEffect(() => {
+    if (!ready || !map.current || network === null) return;
+    (map.current.getSource('network') as GeoJSONSource | undefined)?.setData(networkLines(network));
+    if (!fitted.current && network.length && !located.length) fit();
+  }, [network, ready]);
   useEffect(() => {
     const instance = map.current;
     if (!ready || !instance) return;
@@ -69,7 +98,7 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
       const risk = vehicle.freshness === 'offline' ? 'none' : vehicle.prediction?.risk_level ?? 'none';
       element.className = `vehicle-marker ${risk} ${selectedId === vehicle.tr_id ? 'selected' : ''}`;
       element.textContent = `${vehicle.tr_id}`;
-      element.setAttribute('aria-label', `ТС ${vehicle.tr_id}: ${riskLabels[risk]}`);
+      element.setAttribute('aria-label', `ТС ${vehicle.tr_id}: ${vehicle.freshness === 'offline' ? 'нет связи с ТС' : riskLabels[risk]}`);
       element.setAttribute('aria-pressed', String(selectedId === vehicle.tr_id));
       marker.setLngLat([vehicle.lon!, vehicle.lat!]);
     }
@@ -81,15 +110,18 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
   }, [selectedId, ready]);
   useEffect(() => {
     if (!ready || !map.current) return;
-    (map.current.getSource('track') as GeoJSONSource).setData({ type: 'FeatureCollection', features: card && card.track.length > 1 ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: card.track.map(point => [point.lon, point.lat]) } }] : [] });
-    (map.current.getSource('stops') as GeoJSONSource).setData({ type: 'FeatureCollection', features: (card?.stops ?? []).map(stop => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] } })) });
+    const track = map.current.getSource('track') as GeoJSONSource | undefined;
+    const stops = map.current.getSource('stops') as GeoJSONSource | undefined;
+    if (!track || !stops) return;
+    track.setData({ type: 'FeatureCollection', features: card && card.track.length > 1 ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: card.track.map(point => [point.lon, point.lat]) } }] : [] });
+    stops.setData({ type: 'FeatureCollection', features: (card?.stops ?? []).map(stop => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] } })) });
   }, [card, ready]);
   useEffect(() => {
     const instance = map.current;
-    if (!ready || !instance) return;
+    if (!ready || !instance || !instance.isStyleLoaded()) return;
     if (basemap && !instance.getSource('osm')) {
       instance.addSource('osm', { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors', maxzoom: 19 });
-      instance.addLayer({ id: 'osm', type: 'raster', source: 'osm', paint: { 'raster-saturation': -0.75, 'raster-opacity': 0.65 } }, 'track-line');
+      instance.addLayer({ id: 'osm', type: 'raster', source: 'osm', paint: { 'raster-saturation': -0.75, 'raster-opacity': 0.65 } }, 'network-lines');
     }
     if (instance.getLayer('osm')) instance.setLayoutProperty('osm', 'visibility', basemap ? 'visible' : 'none');
   }, [basemap, ready]);
@@ -98,12 +130,13 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
     <div className="map-heading"><span className="eyebrow">ОПЕРАТИВНАЯ КАРТА</span><span>{located.length} ТС с координатами</span></div>
     <div className="map-actions">
       <button className={`map-button ${basemap ? 'active' : ''}`} aria-pressed={basemap} onClick={() => { setBasemap(value => !value); setTileError(false); }} disabled={mapError}><Icon name="layers" />Подложка</button>
-      <button className="map-button icon-only" title="Показать весь транспорт" aria-label="Показать весь транспорт" onClick={fit} disabled={!located.length || mapError}><Icon name="locate" /></button>
+      <button className="map-button icon-only" title="Показать транспорт или сеть" aria-label="Показать транспорт или сеть" onClick={fit} disabled={(!located.length && !network?.length) || mapError}><Icon name="locate" /></button>
     </div>
     {!located.length && <div className="map-empty"><div className="map-empty-symbol"><Icon name="map" size={36} /></div><h3>Город в поле зрения</h3><p>Положения транспорта появятся здесь,<br />когда поступит телеметрия.</p></div>}
     {mapError && <div className="map-warning" role="status">Карта недоступна в этом браузере. Выберите транспорт в списке.</div>}
     {tileError && basemap && <div className="map-warning" role="status">Подложка недоступна. Положения транспорта и трек продолжают обновляться.</div>}
-    <div className="map-footnote"><span className="coordinate-cross">⌖</span>{basemap ? 'Подложка OpenStreetMap' : 'Координатное поле · без подложки'}{vehicles.length > located.length && <span> · Без координат: {vehicles.length - located.length}</span>}</div>
+    {networkError && <div className="network-warning" role="status">Сеть остановок пока недоступна. Повторяем запрос.</div>}
+    <div className="map-footnote"><span className="coordinate-cross">⌖</span>{basemap ? 'Подложка OpenStreetMap' : 'Координатное поле · без подложки'}{network?.length ? ` · Сеть: ${new Set(network.map(stop => stop.route_id)).size} рейсов` : ''}{vehicles.length > located.length && <span> · Без координат: {vehicles.length - located.length}</span>}</div>
     {card?.track.length ? <div className="track-key"><span />Последний трек · {card.track.length} точек</div> : null}
   </section>;
 }
