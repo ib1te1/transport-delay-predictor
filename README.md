@@ -29,6 +29,7 @@
 | API и Swagger | <http://localhost:8000/docs> |
 | Swagger ML-ядра | <http://localhost:8003/docs> |
 | Время ответа ML-ядра | <http://localhost:8003/metrics> |
+| Метрики цикла прогноза, живой MAE, алерты | <http://localhost:8000/metrics> |
 
 ## Настройки
 

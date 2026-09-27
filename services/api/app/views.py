@@ -8,8 +8,9 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 
 from app.config import ApiConfig
-from app.models import PlanStop, PredictionRow
+from app.models import AlertRow, PlanStop, PredictionRow
 from app.schemas import (
+    AlertView,
     CardStop,
     Freshness,
     FreshnessCounts,
@@ -57,6 +58,11 @@ def prediction_view(row: PredictionRow, target_address: str | None) -> Predictio
         degraded_reason=row.degraded_reason,
         model_version=row.model_version,
     )
+
+
+def alert_view(row: AlertRow) -> AlertView:
+    """The dashboard's form of an ``alerts`` row."""
+    return AlertView(**row.model_dump())
 
 
 def vehicle_view(

@@ -111,3 +111,16 @@ def test_a_normal_step_does_not_log(caplog: pytest.LogCaptureFixture) -> None:
         state.add_telemetry(telemetry_record(7, at(30)))
 
     assert caplog.records == []
+
+
+def test_last_passed_stop_is_the_latest_arrival_up_to_t() -> None:
+    state = FleetState(WINDOW)
+    state.add_stop_event(stop_event(7, 2, at(120), at(150)))
+    state.add_stop_event(stop_event(7, 1, at(60), at(90)))
+    state.add_stop_event(stop_event(8, 5, at(0), at(10)))
+
+    assert state.last_passed_stop(7, at(149)) == 1
+    assert state.last_passed_stop(7, at(150)) == 2
+    assert state.last_passed_stop(7, at(0)) is None
+    assert state.last_passed_stop(9, at(150)) is None
+    assert sorted(e.stop_id for e in state.all_stop_events()) == [1, 2, 5]

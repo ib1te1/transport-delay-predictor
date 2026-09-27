@@ -15,9 +15,10 @@ import app.loop as loop_module
 from app.config import ApiConfig
 from app.dashboard import Dashboard
 from app.loop import StreamNames, run_prediction_loop, schedule_ticks
-from app.models import PredictionRow
+from app.metrics import LoopMetrics
+from app.models import AlertRow, PredictionRow
 from app.predictor_client import PredictorClient
-from app.store import save_predictions
+from app.store import save_predictions, update_alerts
 from common.bus import append_async
 from common.db import connect, fetch_models, insert_models, make_pool
 
@@ -277,6 +278,7 @@ async def test_loop_scores_recovered_and_live_telemetry(database_url: str, redis
         await predictor.aclose()
         with connect(database_url) as conn:
             conn.execute("DELETE FROM predictions WHERE tr_id = %s", (tr_id,))
+            conn.execute("DELETE FROM alerts WHERE tr_id = %s", (tr_id,))
             conn.execute("DELETE FROM stops_plan WHERE stop_id = %s", (target.stop_id,))
             conn.commit()
 
@@ -352,6 +354,7 @@ async def test_loop_keeps_scoring_when_the_dashboard_update_fails(
         await predictor.aclose()
         with connect(database_url) as conn:
             conn.execute("DELETE FROM predictions WHERE tr_id = %s", (tr_id,))
+            conn.execute("DELETE FROM alerts WHERE tr_id = %s", (tr_id,))
             conn.execute("DELETE FROM stops_plan WHERE stop_id = %s", (target.stop_id,))
             conn.commit()
 
@@ -406,6 +409,7 @@ async def test_loop_restores_current_predictions_from_the_table(
         await redis.aclose()
         with connect(database_url) as conn:
             conn.execute("DELETE FROM predictions WHERE tr_id = %s", (tr_id,))
+            conn.execute("DELETE FROM alerts WHERE tr_id = %s", (tr_id,))
             conn.commit()
 
 
@@ -457,6 +461,189 @@ async def test_loop_restart_with_an_already_passed_target_shows_no_prediction(
         await redis.aclose()
         with connect(database_url) as conn:
             conn.execute("DELETE FROM predictions WHERE tr_id = %s", (tr_id,))
+            conn.execute("DELETE FROM alerts WHERE tr_id = %s", (tr_id,))
             conn.commit()
 
     assert vehicle.prediction is None
+
+
+def fetch_alerts(database_url: str, tr_id: int) -> list[AlertRow]:
+    with connect(database_url) as conn:
+        return fetch_models(
+            conn, AlertRow, "SELECT * FROM alerts WHERE tr_id = %s ORDER BY id", (tr_id,)
+        )
+
+
+async def wait_for_confirmed(database_url: str, tr_id: int) -> list[AlertRow]:
+    async with asyncio.timeout(20):
+        while True:
+            alerts = await asyncio.to_thread(fetch_alerts, database_url, tr_id)
+            if any(a.status == "confirmed" for a in alerts):
+                return alerts
+            await asyncio.sleep(0.1)
+
+
+def shown_alerts(dashboard: Dashboard, tr_id: int) -> list:
+    return [a for a in dashboard.snapshot().alerts if a.tr_id == tr_id]
+
+
+def always_late(request: httpx.Request) -> httpx.Response:
+    """predictor answering 400 s of delay to every request: red."""
+    return httpx.Response(
+        200,
+        json=[
+            {
+                "sample_id": r["sample_id"],
+                "prediction_s": 400.0,
+                "p_late": 0.9,
+                "reasons": ["accumulated_delay"],
+                "model_version": "m1",
+            }
+            for r in json.loads(request.content)
+        ],
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.timeout(60)
+async def test_a_red_prediction_opens_an_alert_the_arrival_confirms(
+    database_url: str, redis_url: str
+) -> None:
+    tr_id = 9_000_000_000 + random.randrange(1_000_000)
+    target = plan_stop(tr_id, tr_id, at(1800) + timedelta(minutes=12))
+    streams = StreamNames(
+        telemetry=f"test-{uuid4().hex}",
+        stop_events=f"test-{uuid4().hex}",
+        predictions=f"test-{uuid4().hex}",
+    )
+    predictor = PredictorClient("http://predictor", 1.0, transport=httpx.MockTransport(always_late))
+    redis = Redis.from_url(redis_url)
+    dashboard = Dashboard(redis, ApiConfig(), channel=f"test-{uuid4().hex}")
+    metrics = LoopMetrics()
+    with connect(database_url) as conn:
+        insert_models(conn, "stops_plan", [target])
+        conn.commit()
+    try:
+        await append_async(redis, streams.telemetry, telemetry_record(tr_id, at(0)))
+        await append_async(redis, streams.telemetry, telemetry_record(tr_id, at(1800)))
+        passed_plan = at(1500)
+        await append_async(
+            redis,
+            streams.stop_events,
+            stop_event(tr_id, tr_id + 1, passed_plan, passed_plan + timedelta(seconds=90)),
+        )
+        with make_pool(database_url) as pool:
+            task = asyncio.create_task(
+                run_prediction_loop(
+                    pool,
+                    redis_url,
+                    predictor,
+                    ApiConfig(),
+                    dashboard=dashboard,
+                    metrics=metrics,
+                    streams=streams,
+                )
+            )
+            try:
+                await wait_for_rows(database_url, tr_id, 1)
+                async with asyncio.timeout(10):
+                    while not shown_alerts(dashboard, tr_id):
+                        await asyncio.sleep(0.1)
+                # 400 s late, as predicted
+                arrival_time = target.time_plan + timedelta(seconds=400)
+                await append_async(
+                    redis,
+                    streams.stop_events,
+                    stop_event(tr_id, target.stop_id, target.time_plan, arrival_time),
+                )
+                [alert] = await wait_for_confirmed(database_url, tr_id)
+                async with asyncio.timeout(10):
+                    while shown_alerts(dashboard, tr_id):
+                        await asyncio.sleep(0.1)
+                rows = await asyncio.to_thread(fetch_rows, database_url, tr_id)
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+    finally:
+        await redis.delete(streams.telemetry, streams.stop_events, streams.predictions)
+        await redis.aclose()
+        await predictor.aclose()
+        with connect(database_url) as conn:
+            conn.execute("DELETE FROM predictions WHERE tr_id = %s", (tr_id,))
+            conn.execute("DELETE FROM alerts WHERE tr_id = %s", (tr_id,))
+            conn.execute("DELETE FROM stops_plan WHERE stop_id = %s", (target.stop_id,))
+            conn.commit()
+
+    [row] = rows
+    assert (row.actual_delay_s, row.abs_error_s) == (400.0, 0.0)
+    assert (alert.opened_at, alert.segment_from_stop_id) == (at(1800), tr_id + 1)
+    assert (alert.closed_at, alert.actual_delay_s) == (arrival_time, 400.0)
+    # opened 12 min before the planned arrival, which came 400 s late
+    assert alert.lead_time_s == 720.0 + 400.0
+    assert dashboard.snapshot().checked_predictions >= 1
+    assert metrics.predict_latency_ms().count == 1
+    assert metrics.scoring_tick_ms().count == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.timeout(60)
+async def test_arrivals_that_came_while_api_was_down_are_checked_on_start(
+    database_url: str, redis_url: str
+) -> None:
+    tr_id = 9_000_000_000 + random.randrange(1_000_000)
+    streams = StreamNames(
+        telemetry=f"test-{uuid4().hex}",
+        stop_events=f"test-{uuid4().hex}",
+        predictions=f"test-{uuid4().hex}",
+    )
+    stored = prediction_row(
+        sample_id=f"{tr_id}_a",
+        tr_id=tr_id,
+        t=at(1500),
+        target_stop_id=tr_id,
+        prediction_s=400.0,
+        risk_level="red",
+    )
+    # No predictor_url: nothing is planned for this vehicle, so no tick calls it.
+    predictor = PredictorClient(None, 1.0)
+    redis = Redis.from_url(redis_url)
+    dashboard = Dashboard(redis, ApiConfig(), channel=f"test-{uuid4().hex}")
+    with connect(database_url) as conn:
+        save_predictions(conn, [stored])
+        update_alerts(conn, [stored], {})
+        conn.commit()
+    try:
+        await append_async(redis, streams.telemetry, telemetry_record(tr_id, at(0)))
+        await append_async(redis, streams.telemetry, telemetry_record(tr_id, at(1800)))
+        planned = at(1500) + timedelta(minutes=12)
+        await append_async(
+            redis,
+            streams.stop_events,
+            stop_event(tr_id, tr_id, planned, planned + timedelta(seconds=300)),
+        )
+        with make_pool(database_url) as pool:
+            task = asyncio.create_task(
+                run_prediction_loop(
+                    pool, redis_url, predictor, ApiConfig(), dashboard=dashboard, streams=streams
+                )
+            )
+            try:
+                [alert] = await wait_for_confirmed(database_url, tr_id)
+                await wait_for_shown_vehicle(dashboard, tr_id)
+                [row] = await asyncio.to_thread(fetch_rows, database_url, tr_id)
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+    finally:
+        await redis.delete(streams.telemetry, streams.stop_events, streams.predictions)
+        await redis.aclose()
+        with connect(database_url) as conn:
+            conn.execute("DELETE FROM predictions WHERE tr_id = %s", (tr_id,))
+            conn.execute("DELETE FROM alerts WHERE tr_id = %s", (tr_id,))
+            conn.commit()
+
+    assert (row.actual_delay_s, row.abs_error_s) == (300.0, 100.0)
+    assert (alert.status, alert.lead_time_s) == ("confirmed", 720.0 + 300.0)
+    assert shown_alerts(dashboard, tr_id) == []

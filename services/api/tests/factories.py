@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from app.models import PlanStop, PredictionRow
+from app.models import AlertRow, PlanStop, PredictionRow
 from contracts import PredictRequest, StopEvent, TelemetryRecord, make_sample_id
 
 T0 = datetime(2026, 1, 6, 8, 0, tzinfo=UTC)
@@ -85,3 +85,20 @@ def prediction_row(**overrides) -> PredictionRow:
         "abs_error_s": None,
     }
     return PredictionRow(**(values | overrides))
+
+
+def alert_row(**overrides) -> AlertRow:
+    values = {
+        "id": 1,
+        "tr_id": 7,
+        "target_stop_id": 20,
+        "segment_from_stop_id": None,
+        "status": "open",
+        "opened_at": T0,
+        "closed_at": None,
+        "predicted_delay_s": 400.0,
+        "reasons": ["accumulated_delay"],
+        "actual_delay_s": None,
+        "lead_time_s": None,
+    }
+    return AlertRow(**(values | overrides))

@@ -96,6 +96,15 @@ class FleetState:
         """The vehicle's passed stops in order of ``time_fact``."""
         return sorted(self._stop_events.get(tr_id, {}).values(), key=lambda e: e.time_fact)
 
+    def all_stop_events(self) -> list[StopEvent]:
+        """Every passed stop held, one per stop."""
+        return [e for events in self._stop_events.values() for e in events.values()]
+
+    def last_passed_stop(self, tr_id: int, t: datetime) -> int | None:
+        """The vehicle's stop passed last at or before ``t``, ``None`` if none."""
+        passed = [e for e in self.stop_events(tr_id) if e.time_fact <= t]
+        return passed[-1].stop_id if passed else None
+
     def warming_up(self, t: datetime) -> bool:
         """True while telemetry seen so far does not reach a full window back from ``t``."""
         return self.observed_since is None or self.observed_since > t - self._window
