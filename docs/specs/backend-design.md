@@ -188,13 +188,18 @@
 
 **CORS.** Дашборд открывается с другого origin, чем `api`: браузер
 загружает страницу с `web` (`:5173`) и ходит в `api` по `VITE_API_URL`
-(`:8000`, `PUBLIC_API_URL`). Поэтому `api` отдаёт
-`Access-Control-Allow-Origin` для origin дашборда — список в конфиге
-`api`, по умолчанию `http://localhost:5173`; при доступе с других машин
-(`BIND_ADDR=0.0.0.0`) в него добавляется внешний адрес дашборда. Другой вариант — Vite
-проксирует `/api` и `/ws`, и дашборд работает с одного origin. Без этого
-браузер блокирует REST; WebSocket CORS не проверяет. **Не реализовано**
-на 27.09: заголовка нет (`tests/e2e/test_07_web.py`).
+(`:8000`, `PUBLIC_API_URL`). `api` отдаёт `Access-Control-Allow-Origin`
+через `CORSMiddleware` (Starlette/FastAPI). Список разрешённых origin —
+`api.cors_origins` в конфиге (список строк), по умолчанию
+`["http://localhost:5173", "http://127.0.0.1:5173"]`, поэтому конфиг без
+этого ключа (например, `tests/e2e/config/system.yaml`) тоже работает.
+При доступе с других машин (`BIND_ADDR=0.0.0.0`) в `cors_origins`
+добавляется внешний адрес дашборда. Разрешён только `GET` (и preflight
+`OPTIONS`, его обрабатывает сама middleware); credentials выключены,
+wildcard `*` по умолчанию не используется. Прокси Vite для `/api` и
+`/ws` в этом решении не используется — дашборд и `api` остаются разными
+origin. Без заголовка браузер блокирует REST; WebSocket CORS не
+проверяет.
 
 ### 7.1. Вид ТС и снимок
 
@@ -412,6 +417,7 @@ api:
   drop_after_sec: 900
   predict_timeout_ms: 1000
   card_track_sec: 1800
+  cors_origins: ["http://localhost:5173", "http://127.0.0.1:5173"]
   request:
     telemetry_window_sec: 1800
     schedule_back_sec: 3600
