@@ -11,8 +11,9 @@ process's ``Dashboard``, publishes every prediction row and alert change
 there, and refreshes the dashboard's view once a second.
 
 Every arrival from ``stop_events`` checks the predictions made for that
-stop and confirms its open alert. On start the run checks all arrivals in
-the stream again, so those that came while api was down are not missed;
+stop, confirms its open alert and cancels the vehicle's open alerts for
+stops planned before it. On start the run checks all arrivals in the
+stream again, so those that came while api was down are not missed;
 rows already checked stay as they are.
 """
 
@@ -38,6 +39,7 @@ from app.state import FleetState
 from app.store import (
     Accuracy,
     check_predictions,
+    close_passed_alerts,
     confirm_alerts,
     load_accuracy,
     load_alerts,
@@ -118,12 +120,13 @@ def _update_alerts(
 def _check_arrivals(
     pool: ConnectionPool, events: Sequence[StopEvent], *, always_measure: bool = False
 ) -> tuple[list[AlertRow], Accuracy | None]:
-    """Check predictions and confirm alerts; the new accuracy, or ``None`` if no row changed."""
+    """Check predictions, close the alerts the arrivals settle; the closed alerts and the
+    new accuracy, or ``None`` for it if no prediction changed."""
     with pool.connection() as conn:
         changed = check_predictions(conn, events)
-        confirmed = confirm_alerts(conn, events)
+        closed = confirm_alerts(conn, events) + close_passed_alerts(conn, events)
         accuracy = load_accuracy(conn) if changed or always_measure else None
-    return confirmed, accuracy
+    return closed, accuracy
 
 
 def _load_open_alerts(pool: ConnectionPool) -> list[AlertRow]:
