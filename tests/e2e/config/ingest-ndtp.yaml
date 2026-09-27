@@ -26,11 +26,11 @@ api:
   # Origins the dashboard is served from. With BIND_ADDR=0.0.0.0 add the
   # address other machines open it by.
   cors_origins: ["http://localhost:5173", "http://127.0.0.1:5173"]
-  # What the model needs, measured on test (docs/specs/ml-model.md): 150
-  # minutes of telemetry to see the previous loop, and the plan from the
-  # start of the day, where trips are counted from. With 30 minutes and 1
-  # hour the MAE grows by 4 s.
+  # Demo setting: 30 minutes of telemetry makes the live dashboard useful
+  # after three minutes at replay.speedup=10. The full 150-minute history
+  # improves MAE by about 4 s on test (docs/specs/ml-model.md).
   request:
+    # E2E keeps the full history to verify the model on synthetic trips.
     telemetry_window_sec: 9000
     schedule_back_sec: 86400
   # Predicted delay, seconds. Inside green: on schedule. Above red_above:
@@ -76,6 +76,7 @@ predictor:
 replay:
   # Must match seed.period so telemetry and planned stops share a period.
   period: validate
+  # E2E runs the synthetic period in about ten seconds.
   speedup: 240
   start_at: null
   end_at: null

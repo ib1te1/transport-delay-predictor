@@ -187,6 +187,22 @@ button:focus-visible,input:focus-visible,h2:focus-visible {
   color:#718495;
   font-size:12px
 }
+.heading-status {
+  display:flex;
+  align-items:center;
+  gap:8px
+}
+.active-alerts {
+  border:1px solid #c75c55;
+  border-radius:5px;
+  background:#fff2ed;
+  color:#973e36;
+  padding:7px 10px;
+  font-size:11px;
+  font-weight:700;
+  white-space:nowrap;
+  cursor:pointer
+}
 .snapshot-label {
   font-size:11px;
   color:#8398a3;
@@ -657,37 +673,79 @@ button:focus-visible,input:focus-visible,h2:focus-visible {
   gap:7px;
   align-items:center
 }
-.track-key span {
+.track-key .gps-track {
   width:17px;
   border-top:3px solid #16857a
 }
+.track-key .planned-route {
+  width:17px;
+  border-top:3px dashed #16857a
+}
+.track-key .gps-away {
+  width:17px;
+  border-top:3px dashed #c79738
+}
 .vehicle-marker {
-  border:2px solid white;
-  border-radius:10px;
-  min-width:36px;
-  height:36px;
-  padding:0 5px;
-  background:#9babb1;
-  color:white;
-  font-size:10px;
-  font-weight:800;
-  box-shadow:0 2px 7px #092a3c75
+  --marker-color:#9babb1;
+  border:0;
+  width:44px;
+  height:44px;
+  padding:0;
+  background:transparent;
+  display:grid;
+  place-items:center
 }
 .vehicle-marker.red {
-  background:#ce5958
+  --marker-color:#ce5958
 }
 .vehicle-marker.yellow {
-  background:#c79738
+  --marker-color:#c79738
 }
 .vehicle-marker.green {
-  background:#43a18a
+  --marker-color:#43a18a
 }
-.vehicle-marker.selected {
+.vehicle-marker-icon {
+  width:42px;
+  height:42px;
+  display:grid;
+  place-items:center;
+  border:2px solid white;
+  border-radius:10px;
+  background:var(--marker-color);
+  box-shadow:0 2px 7px #092a3c75;
+  pointer-events:none
+}
+.vehicle-marker-icon img {
+  width:38px;
+  height:38px;
+  display:block;
+  object-fit:contain
+}
+.vehicle-marker-label {
+  position:absolute;
+  bottom:calc(100% + 3px);
+  left:50%;
+  transform:translateX(-50%);
+  padding:3px 5px;
+  border:1px solid var(--marker-color);
+  border-radius:5px;
+  background:#10283b;
+  color:#fff;
+  font-size:10px;
+  font-weight:800;
+  line-height:1;
+  white-space:nowrap;
+  box-shadow:0 2px 6px #092a3c75;
+  pointer-events:none
+}
+.vehicle-marker.selected .vehicle-marker-icon {
   outline:3px solid #173c4b;
   outline-offset:2px;
+}
+.vehicle-marker.selected {
   z-index:5
 }
-.vehicle-marker:hover {
+.vehicle-marker:hover .vehicle-marker-icon {
   transform:scale(1.12)
 }
 .detail-panel {
@@ -1333,4 +1391,208 @@ button:focus-visible,input:focus-visible,h2:focus-visible {
     transition:none!important;
     animation:none!important
   }
+}
+
+.theme-toggle {
+  min-height:36px;
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:0 10px;
+  border:1px solid #ffffff36;
+  border-radius:6px;
+  background:#ffffff0c;
+  color:#d8e9ed;
+  font-size:11px;
+  font-weight:700;
+  white-space:nowrap
+}
+.theme-toggle:hover { background:#ffffff1b }
+
+:root[data-theme="dark"] {
+  color-scheme:dark;
+  color:#e3edf2;
+  background:#0c1721
+}
+:root[data-theme="dark"] .topbar {
+  background:#101d2b;
+  border-bottom:1px solid #294252;
+  box-shadow:0 3px 16px #050e17a0
+}
+:root[data-theme="dark"] .brand-caption,
+:root[data-theme="dark"] .connection-status,
+:root[data-theme="dark"] .data-clock,
+:root[data-theme="dark"] .data-clock small { color:#aac0ca }
+:root[data-theme="dark"] .theme-toggle { border-color:#426171; background:#1b3443; color:#d7f0ed }
+:root[data-theme="dark"] .theme-toggle:hover { background:#285160 }
+:root[data-theme="dark"] .eyebrow { color:#8cb6bd }
+:root[data-theme="dark"] .workspace-heading h1 { color:#edf6f8 }
+:root[data-theme="dark"] .workspace-heading p,
+:root[data-theme="dark"] .app-footer { color:#a6bbc6 }
+:root[data-theme="dark"] .snapshot-label {
+  color:#b6cbd2;
+  border-color:#304a59;
+  background:#172a38
+}
+:root[data-theme="dark"] .active-alerts {
+  border-color:#a85e57;
+  background:#402b2d;
+  color:#ffd5c9
+}
+:root[data-theme="dark"] .summary-filter,
+:root[data-theme="dark"] .fleet-panel,
+:root[data-theme="dark"] .detail-panel {
+  background:#172735;
+  color:#e3edf2;
+  border-color:#304757;
+  box-shadow:0 4px 16px #050e1780
+}
+:root[data-theme="dark"] .summary-filter:hover { border-color:#669fa5; box-shadow:0 5px 17px #050e17a0 }
+:root[data-theme="dark"] .summary-filter.active {
+  border-color:#55c4b4;
+  background:#1b3540;
+  box-shadow:inset 0 3px #55c4b4,0 4px 12px #050e1780
+}
+:root[data-theme="dark"] .filter-title,
+:root[data-theme="dark"] .filter-short { color:#b9cbd3 }
+:root[data-theme="dark"] .panel-header,
+:root[data-theme="dark"] .fleet-controls { border-bottom-color:#304757 }
+:root[data-theme="dark"] .panel-number { color:#9fb6c0 }
+:root[data-theme="dark"] .search-box {
+  background:#10212e;
+  border-color:#395463;
+  color:#a7c1cb
+}
+:root[data-theme="dark"] .search-box:focus-within { background:#142e3b; border-color:#67d5c6 }
+:root[data-theme="dark"] .search-box input { color:#edf7f8 }
+:root[data-theme="dark"] .search-box input::placeholder { color:#9eb4bf }
+:root[data-theme="dark"] .result-count,
+:root[data-theme="dark"] .result-count span { color:#a9bdc7 }
+:root[data-theme="dark"] .fleet-list li+li { border-top-color:#293f4d }
+:root[data-theme="dark"] .fleet-item { background:#172735; color:#e4eef2 }
+:root[data-theme="dark"] .fleet-item:hover { background:#213c48 }
+:root[data-theme="dark"] .fleet-item.selected { background:#20434b; box-shadow:inset 3px 0 #6cddca }
+:root[data-theme="dark"] .fleet-item>svg,
+:root[data-theme="dark"] .fleet-item-detail,
+:root[data-theme="dark"] .fleet-item-time { color:#a5bbc6 }
+:root[data-theme="dark"] .risk-text.red,
+:root[data-theme="dark"] .history-list strong.red { color:#ffaaa3 }
+:root[data-theme="dark"] .risk-text.yellow,
+:root[data-theme="dark"] .history-list strong.yellow { color:#f4ca78 }
+:root[data-theme="dark"] .risk-text.green,
+:root[data-theme="dark"] .history-list strong.green { color:#89dcbb }
+:root[data-theme="dark"] .risk-text.none { color:#b5c6cc }
+:root[data-theme="dark"] .list-empty { color:#9bb5bd }
+:root[data-theme="dark"] .list-empty strong { color:#e3eef1 }
+
+:root[data-theme="dark"] .map-panel,
+:root[data-theme="dark"] .map-canvas {
+  background-color:#102430;
+  border-color:#304757
+}
+:root[data-theme="dark"] .map-canvas {
+  background-image:linear-gradient(#3a59604d 1px,transparent 1px),linear-gradient(90deg,#3a59604d 1px,transparent 1px)
+}
+:root[data-theme="dark"] .map-heading,
+:root[data-theme="dark"] .map-footnote,
+:root[data-theme="dark"] .track-key {
+  background:#172b39f2;
+  border-color:#3b5a67;
+  color:#c2d9df;
+  box-shadow:0 3px 10px #050e1780
+}
+:root[data-theme="dark"] .map-heading>span:last-child,
+:root[data-theme="dark"] .map-fallback,
+:root[data-theme="dark"] .map-empty p { color:#afc6cd }
+:root[data-theme="dark"] .map-fallback h2,
+:root[data-theme="dark"] .map-empty h3 { color:#e5f2f3 }
+:root[data-theme="dark"] .map-empty-symbol { background:#25414c; color:#91d7cc }
+:root[data-theme="dark"] .map-button,
+:root[data-theme="dark"] .icon-button,
+:root[data-theme="dark"] .maplibregl-ctrl-group {
+  background:#1a3543;
+  border-color:#496574;
+  color:#d1e7e9
+}
+:root[data-theme="dark"] .map-button:hover,
+:root[data-theme="dark"] .icon-button:hover,
+:root[data-theme="dark"] .maplibregl-ctrl-group button:hover { background:#285263 }
+:root[data-theme="dark"] .map-button.active { background:#22534f; border-color:#69d5c3; color:#b9fff0 }
+:root[data-theme="dark"] .maplibregl-ctrl-group button { filter:invert(1) hue-rotate(180deg) }
+:root[data-theme="dark"] .maplibregl-ctrl-attrib {
+  background:#172b39f2!important;
+  color:#c2d9df
+}
+:root[data-theme="dark"] .maplibregl-ctrl-attrib a { color:#9de4d9 }
+:root[data-theme="dark"] .map-warning,
+:root[data-theme="dark"] .network-warning,
+:root[data-theme="dark"] .degraded-note {
+  background:#49381d;
+  border-color:#b99249;
+  color:#ffe0a1
+}
+:root[data-theme="dark"] .track-key span { border-color:#6bd6c4 }
+:root[data-theme="dark"] .track-key .gps-away { border-color:#f2b862 }
+:root[data-theme="dark"] .vehicle-marker.selected .vehicle-marker-icon { outline-color:#d7f7ef }
+
+:root[data-theme="dark"] .detail-subtitle,
+:root[data-theme="dark"] .vehicle-metrics span,
+:root[data-theme="dark"] .prediction-topline,
+:root[data-theme="dark"] .prediction-target,
+:root[data-theme="dark"] .prediction-value span,
+:root[data-theme="dark"] .prediction-facts span,
+:root[data-theme="dark"] .model-caption,
+:root[data-theme="dark"] .section-title>span,
+:root[data-theme="dark"] .detail-section>p,
+:root[data-theme="dark"] .stop-list small,
+:root[data-theme="dark"] .history-list li,
+:root[data-theme="dark"] .detail-date,
+:root[data-theme="dark"] .welcome-body p,
+:root[data-theme="dark"] .quality-row,
+:root[data-theme="dark"] .loading-note { color:#aec4cd }
+:root[data-theme="dark"] .freshness-pill { background:#1f493e; color:#a1eac4 }
+:root[data-theme="dark"] .freshness-pill.stale { background:#4a391f; color:#f6d48d }
+:root[data-theme="dark"] .freshness-pill.offline { background:#34424b; color:#cad5da }
+:root[data-theme="dark"] .vehicle-metrics>div,
+:root[data-theme="dark"] .no-prediction {
+  background:#1d3442;
+  border-color:#38515f;
+  color:#b9cdd5
+}
+:root[data-theme="dark"] .vehicle-metrics strong,
+:root[data-theme="dark"] .no-prediction strong,
+:root[data-theme="dark"] .prediction-value strong,
+:root[data-theme="dark"] .prediction-target strong,
+:root[data-theme="dark"] .prediction-facts strong,
+:root[data-theme="dark"] .section-title h3,
+:root[data-theme="dark"] .stop-list strong,
+:root[data-theme="dark"] .welcome-body h2,
+:root[data-theme="dark"] .quality-title,
+:root[data-theme="dark"] .quality-row strong { color:#e6f1f3 }
+:root[data-theme="dark"] .prediction-panel {
+  background:#1b3440;
+  border-color:#3c6069
+}
+:root[data-theme="dark"] .risk-badge { background:#21483b; color:#abe6c4 }
+:root[data-theme="dark"] .risk-badge.red { background:#563037; color:#ffb1aa }
+:root[data-theme="dark"] .risk-badge.yellow { background:#554222; color:#f6d48d }
+:root[data-theme="dark"] .prediction-facts,
+:root[data-theme="dark"] .prediction-facts>div,
+:root[data-theme="dark"] .detail-section,
+:root[data-theme="dark"] .history-list li,
+:root[data-theme="dark"] .quality-row { border-color:#36505c }
+:root[data-theme="dark"] .reason-group h4 { color:#c3d8df }
+:root[data-theme="dark"] .reason-tag { background:#285048; color:#c0f1dc }
+:root[data-theme="dark"] .inline-error { background:#542d31; border-color:#a95c5d; color:#ffd2cd }
+:root[data-theme="dark"] .stop-list li:not(:last-child):before { border-color:#557079 }
+:root[data-theme="dark"] .stop-node { background:#172735; border-color:#7edac7 }
+:root[data-theme="dark"] .stop-node.passed { background:#7edac7 }
+:root[data-theme="dark"] .history-list strong { color:#9cddc3 }
+:root[data-theme="dark"] .welcome-panel { background:#172735 }
+:root[data-theme="dark"] .welcome-icon { background:#23473f; color:#a0e3d3 }
+:root[data-theme="dark"] .quality-panel { border-color:#36505c }
+
+@media(max-width:600px) {
+  .theme-toggle { width:36px; min-width:36px; padding:0; justify-content:center }
+  .theme-toggle span { display:none }
 }

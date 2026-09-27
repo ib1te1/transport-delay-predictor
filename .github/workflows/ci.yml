@@ -255,13 +255,13 @@ jobs:
           mkdir -p data/dataset/validate
           cat > data/dataset/validate/schedule_plan.csv <<'CSV'
           tt_action_item_id,tr_id,geom,time_begin
-          1,2,POINT (38 55),2026-01-06 00:00:01
+          1,2,POINT (38 55),2026-01-06 11:30:01
           CSV
           cat > data/dataset/validate/traffic.csv <<'CSV'
           unit_id,tr_id,event_time,location_valid,lat,lon,speed,heading
-          1,2,2026-01-06 00:00:03,True,55,38,20,90
-          1,2,2026-01-06 00:00:01,True,55,38,20,90
-          1,2,2026-01-06 00:00:02,True,55,38,20,90
+          1,2,2026-01-06 11:30:03,True,55,38,20,90
+          1,2,2026-01-06 11:30:01,True,55,38,20,90
+          1,2,2026-01-06 11:30:02,True,55,38,20,90
           CSV
       - run: docker compose up --build --wait --wait-timeout 120 ingest
       - run: curl --fail http://127.0.0.1:8001/health
