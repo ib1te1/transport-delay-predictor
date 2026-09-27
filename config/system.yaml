@@ -20,12 +20,11 @@ api:
   # Origins the dashboard is served from. With BIND_ADDR=0.0.0.0 add the
   # address other machines open it by.
   cors_origins: ["http://localhost:5173", "http://127.0.0.1:5173"]
-  # What the model needs, measured on test (docs/specs/ml-model.md): 150
-  # minutes of telemetry to see the previous loop, and the plan from the
-  # start of the day, where trips are counted from. With 30 minutes and 1
-  # hour the MAE grows by 4 s.
+  # Demo setting: 30 minutes of telemetry makes the live dashboard useful
+  # after three minutes at replay.speedup=10. The full 150-minute history
+  # improves MAE by about 4 s on test (docs/specs/ml-model.md).
   request:
-    telemetry_window_sec: 9000
+    telemetry_window_sec: 1800
     schedule_back_sec: 86400
   # Predicted delay, seconds. Inside green: on schedule. Above red_above:
   # red. Everything else, including early by more than green's lower
@@ -70,7 +69,8 @@ predictor:
 replay:
   # Must match seed.period so telemetry and planned stops share a period.
   period: validate
-  speedup: 60
-  start_at: null
-  end_at: null
+  # Six dataset hours play for about 36 real minutes; GPS updates remain visible.
+  speedup: 10
+  start_at: "2026-01-06T10:00:00Z"
+  end_at: "2026-01-06T16:00:00Z"
   sort_chunk_rows: 20000

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { delay } from '../src/format.ts';
-import { networkLines } from '../src/network.ts';
+import { nearestPlannedStopKm, networkLines, trackSections } from '../src/network.ts';
 import { applyMessage, mergeHistory, reconcile, SequenceGap, summarize } from '../src/protocol.ts';
 import type { Message, Prediction, Snapshot, Vehicle } from '../src/types.ts';
 
@@ -75,4 +75,43 @@ test('network lines stay within each run and follow stop order', () => {
   assert.equal(lines.features.length, 1);
   assert.equal(lines.features[0].properties?.route_id, 7);
   assert.deepEqual(lines.features[0].geometry.coordinates, [[1, 55], [2, 55], [3, 55]]);
+});
+
+test('planned lines stop at a layover instead of bridging separate trips', () => {
+  const stop = (stop_order: number, minute: number, lon: number) => ({
+    route_id: 122658, stop_order, stop_id: stop_order,
+    address: null, lat: 55.8, lon,
+    time_plan: `2026-01-06T10:${String(minute).padStart(2, '0')}:00Z`,
+  });
+  const route = [stop(1, 0, 37.36), stop(2, 2, 37.37), stop(3, 20, 37.45), stop(4, 22, 37.46)];
+  const lines = networkLines(route);
+  assert.deepEqual(lines.features.map(line => line.geometry.coordinates), [
+    [[37.36, 55.8], [37.37, 55.8]],
+    [[37.45, 55.8], [37.46, 55.8]],
+  ]);
+  assert.ok(nearestPlannedStopKm(55.975, 37.43, route)! > 18);
+});
+
+test('GPS away from planned stops is shown separately', () => {
+  const route = [{ route_id: 122658, stop_order: 1, stop_id: 1, address: null,
+    lat: 55.8, lon: 37.4, time_plan: '2026-01-06T10:00:00Z' }];
+  const track = [
+    { event_time: '2026-01-06T10:00:00Z', lat: 55.8, lon: 37.4, speed_kmh: 0 },
+    { event_time: '2026-01-06T10:01:00Z', lat: 55.801, lon: 37.4, speed_kmh: 5 },
+    { event_time: '2026-01-06T10:02:00Z', lat: 55.975, lon: 37.43, speed_kmh: 0 },
+  ];
+  const sections = trackSections(track, route);
+  assert.equal(sections.onRoute.features.length, 1);
+  assert.equal(sections.away.features.length, 1);
+  assert.deepEqual(sections.away.features[0].geometry.coordinates[1], [37.43, 55.975]);
+});
+
+test('GPS track does not connect positions across missing telemetry', () => {
+  const track = [
+    { event_time: '2026-01-06T12:38:57Z', lat: 55.964363, lon: 37.43, speed_kmh: 99 },
+    { event_time: '2026-01-06T12:46:14Z', lat: 55.802868, lon: 37.43, speed_kmh: 12 },
+  ];
+  const sections = trackSections(track, []);
+  assert.equal(sections.onRoute.features.length, 0);
+  assert.equal(sections.away.features.length, 0);
 });
