@@ -8,6 +8,7 @@ twice or skipped.
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 
 from pydantic import BaseModel, ValidationError
 from redis.asyncio import Redis
@@ -84,12 +85,18 @@ async def feed_telemetry(
     *,
     stream: str = TELEMETRY_STREAM,
     block_ms: int = 1000,
+    on_entry: Callable[[str], None] | None = None,
 ) -> None:
-    """Apply telemetry arriving after ``last_id`` until cancelled."""
-    async for _entry_id, record in read_stream(
+    """Apply telemetry arriving after ``last_id`` until cancelled.
+
+    ``on_entry`` gets the id of every entry read, malformed ones aside.
+    """
+    async for entry_id, record in read_stream(
         redis, stream, TelemetryRecord, last_id=last_id, block_ms=block_ms
     ):
         state.add_telemetry(record)
+        if on_entry is not None:
+            on_entry(entry_id)
 
 
 async def feed_stop_events(
@@ -99,12 +106,19 @@ async def feed_stop_events(
     *,
     stream: str = STOP_EVENTS_STREAM,
     block_ms: int = 1000,
+    on_event: Callable[[StopEvent], Awaitable[None]] | None = None,
 ) -> None:
-    """Apply stop events arriving after ``last_id`` until cancelled."""
+    """Apply stop events arriving after ``last_id`` until cancelled.
+
+    ``on_event`` is awaited for every event after the state has it; what
+    it raises ends the feed.
+    """
     async for _entry_id, event in read_stream(
         redis, stream, StopEvent, last_id=last_id, block_ms=block_ms
     ):
         state.add_stop_event(event)
+        if on_event is not None:
+            await on_event(event)
 
 
 def _parse[M: BaseModel](model: type[M], fields: dict, entry_id: str, stream: str) -> M | None:

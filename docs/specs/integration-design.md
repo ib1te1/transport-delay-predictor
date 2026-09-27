@@ -195,7 +195,7 @@ Python проходят, `ruff` чист, собираются 8 образов 
 | Стек | `/health` всех сервисов, `/ready` у `matcher`, модель `current` в `predictor`, миграции на голове, `seed` загрузил период, `WsMessage` в `openapi.json` | `test_01_stack.py` |
 | Сценарий А: CSV → `ingest` | прогон `completed`; строки `telemetry` совпадают с датасетом, в шине — по времени датасета; повторный запуск завершённого прогона отклоняется | `test_02_replay.py` |
 | `matcher` | `stop_events` в Postgres и в шине с верными `time_fact` и `delay_s`; пройденные остановки с задержкой в карточке ТС | `test_03_matcher.py` |
-| `predictor` за `api` | прямой запрос, порядок пачки, `422` на неверный вход; `api` прогнозирует каждый автобус, `sample_id` и целевая остановка в `(T+10, T+15]` мин, риск по порогам, ни одного fallback; прогнозы в шине, снимке и карточке | `test_04_predictions.py` |
+| `predictor` за `api` | прямой запрос, порядок пачки, `422` на неверный вход; `api` прогнозирует каждый автобус, `sample_id` и целевая остановка в `(T+10, T+15]` мин, риск по порогам, ни одного fallback; прогнозы в шине, снимке и карточке; прогнозы проверены по факту, живой MAE в снимке и `/metrics`, `/api/alerts` согласован со снимком | `test_04_predictions.py` |
 | WebSocket | `seq` без пропусков, сообщения `prediction` и `vehicles` во время проигрывания, переход снимок → поток по `backend-design.md` §7.4 | `test_05_ws.py` |
 | Сценарий Б: NDTP по TCP | `ingest.mode: emulator`: handshake, кадр с неверной CRC отброшен без падения слушателя, переподключение, `event_time` от якоря; точки доходят до шины и снимка | `test_06_ndtp.py` |
 | Сброс демо | очищены все таблицы прогона и потоки, справочники на месте; после сброса весь путь проходит заново | `test_09_reset.py` |
@@ -207,9 +207,11 @@ Swagger отвечает у `api` и `predictor`. Причины прогноз�
 
 По критериям кейса (`docs/case-brief.md`, «Оценивание»):
 
-- **Критерий 2.** Прогноз в окне T+10…15 формируется на потоке, но
-  алертов нет: таблица `alerts` не пишется, `lead_time_s` не считается
-  (`backend-design.md` §6), подтвердить «не задним числом» цифрой нельзя.
+- **Критерий 2.** Прогноз в окне T+10…15 формируется на потоке,
+  красный прогноз открывает алерт, прибытие подтверждает его с
+  `lead_time_s`; среднее — в `/metrics` (`backend-design.md` §6, §9). В
+  синтетике e2e красных прогнозов нет: сквозной тест проверяет только
+  `/api/alerts`, жизнь алерта — тесты `api`.
 - **Критерий 3.** Цепочка «поток → прогноз» работает, звено «→ дашборд»
   — нет: `web` — заготовка без обращений к `api`
   (`test_07_web.py`, xfail). В сценарии А датасет идёт мимо NDTP
@@ -219,18 +221,17 @@ Swagger отвечает у `api` и `predictor`. Причины прогноз�
   клиента WS (`test_07_web.py::test_dashboard_source_uses_the_api`,
   xfail). CORS для origin дашборда `api` отдаёт (`backend-design.md` §7,
   `test_07_web.py::test_api_lets_the_dashboard_origin_read_it`).
-- **Критерий 5.** Нет `GET /metrics` у `api` (`test_04_predictions.py`,
-  xfail). Задержку `/predict` отдаёт `GET /metrics` у `predictor`, замер
-  всей системы и решение по `api.predict_timeout_ms` — в
-  `docs/performance.md` (§7). `/ready` есть только у `matcher`.
+- **Критерий 5.** Работу цикла прогноза отдаёт `GET /metrics` у `api`
+  (`backend-design.md` §9), время ответа модели — `GET /metrics` у
+  `predictor`; замер всей системы и решение по `api.predict_timeout_ms` —
+  в `docs/performance.md` (§7). `/ready` есть только у `matcher`.
 
 По спекам:
 
-- `backend-design.md` §4: `actual_delay_s` и `abs_error_s` не
-  проставляются, в снимке `live_mae_s = null`, `checked_predictions = 0`
-  (`test_04_predictions.py`, xfail).
-- `backend-design.md` §6, §7, §9: алертов, `/api/alerts`, `/api/stops`,
-  `/api/routes` и `/metrics` нет (`404`; `test_04_predictions.py`, xfail).
+- `backend-design.md` §7: `/api/stops` и `/api/routes` нет (`404`;
+  `test_04_predictions.py`, xfail).
+- `backend-design.md` §6: алерт, по цели которого `matcher` не выдал
+  прибытие, остаётся открытым.
 - `system-design.md` §4: таблицы `route_shapes` нет, риска маршрута нет.
 - `system-design.md` §3.4: приёмка `matcher` на test против
   `labels_test.csv` не проводилась (§3 не начат).
@@ -257,7 +258,7 @@ Swagger отвечает у `api` и `predictor`. Причины прогноз�
 | # | Задача | Трек | Закрывает |
 | --- | --- | --- | --- |
 | 1 | MVP дашборда: карта MapLibre с ТС по снимку и `/ws` (§7.4 `backend-design.md`), цвет по `risk_level`, карточка ТС с прогнозом, причинами и целевой остановкой | Фронтенд | критерии 3, 4; `test_07_web.py` |
-| 2 | Проверка по факту и живой MAE, алерты с `lead_time_s`, `/api/alerts`, `/metrics` | Бэкенд | критерии 2, 5; xfail в `test_04_predictions.py` |
+| 2 | ~~Проверка по факту и живой MAE, алерты с `lead_time_s`, `/api/alerts`, `/metrics`~~ готово | Бэкенд | критерии 2, 5; xfail в `test_04_predictions.py` |
 | 3 | ~~Замер на validate, `api.predict_timeout_ms`, `docs/performance.md` (`chore/validate-timing`)~~ готово | ML | критерий 5, раздел «Сдача» |
 | 4 | Инструкция для жюри: дашборд, алерты, метрики; прямо сказать, что в сценарии А датасет идёт мимо NDTP, а NDTP показывается сценарием Б, и как подключить эмулятор (порт, `unitId`, `intervalMs`) | Бэкенд, Фронтенд | раздел «Сдача» |
 | 5 | `restart: unless-stopped` у долгоживущих сервисов | Бэкенд | критерий 5 |

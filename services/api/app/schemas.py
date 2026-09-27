@@ -84,8 +84,8 @@ class AlertView(AlertRow):
 class StateSnapshot(BaseModel):
     """The whole dashboard state as of message ``seq``.
 
-    ``alerts`` stays empty and ``live_mae_s`` ``None`` until alerts and
-    fact checking exist; the shape does not change when they do.
+    ``alerts`` are the open ones, newest first. ``live_mae_s`` is ``None``
+    until the first prediction is checked against an arrival.
     """
 
     seq: int
@@ -93,6 +93,43 @@ class StateSnapshot(BaseModel):
     vehicles: list[VehicleView]
     summary: Summary
     alerts: list[AlertView]
+    live_mae_s: float | None
+    checked_predictions: int
+
+
+class Spread(BaseModel):
+    """p50, p95 and max of one quantity over the metrics window, and how many values."""
+
+    p50: float
+    p95: float
+    max: float
+    count: int
+
+
+class AlertStats(BaseModel):
+    """Alerts per status since the run began; lead time is averaged over the confirmed ones."""
+
+    open: int
+    confirmed: int
+    cancelled: int
+    mean_lead_time_s: float | None
+
+
+class Metrics(BaseModel):
+    """What ``GET /metrics`` answers.
+
+    Timings, rates and ``degraded_share`` cover the last five minutes of
+    real time; ``alerts`` and the live MAE cover the whole run.
+    """
+
+    predict_latency_ms: Spread | None
+    predict_failures: int
+    scoring_tick_ms: Spread | None
+    stream_lag_s: float | None
+    vehicles_active: int
+    predictions_per_min: float
+    degraded_share: float | None
+    alerts: AlertStats
     live_mae_s: float | None
     checked_predictions: int
 

@@ -5,7 +5,7 @@ import random
 from datetime import timedelta
 
 import pytest
-from factories import at, plan_stop, prediction_row, stop_event, telemetry_record
+from factories import alert_row, at, plan_stop, prediction_row, stop_event, telemetry_record
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.config import ApiConfig
@@ -345,3 +345,35 @@ async def test_card_windows_follow_card_track_sec() -> None:
     assert card.stops[0].delay_s == 40.0
     assert [p.sample_id for p in card.predictions] == ["7_3600", "7_3540"]
     assert card.vehicle.tr_id == 7
+
+
+@pytest.mark.anyio
+async def test_alert_changes_are_published_and_the_snapshot_keeps_the_open_ones() -> None:
+    bus = Bus()
+    dashboard = Dashboard(bus, CONFIG, channel="test-channel")
+    first = alert_row(id=1, opened_at=at(0))
+    second = alert_row(id=2, target_stop_id=21, opened_at=at(60))
+
+    await dashboard.publish_alerts([first, second])
+    opened = dashboard.snapshot()
+    await dashboard.publish_alerts([first.model_copy(update={"status": "confirmed"})])
+    closed = dashboard.snapshot()
+
+    assert bus.types() == ["alert", "alert", "alert"]
+    assert bus.seqs() == [1, 2, 3]
+    assert bus.messages[2]["data"]["alert"]["status"] == "confirmed"
+    assert (opened.seq, [a.id for a in opened.alerts]) == (2, [2, 1])
+    assert (closed.seq, [a.id for a in closed.alerts]) == (3, [2])
+
+
+def test_open_alerts_and_accuracy_are_set_without_a_message() -> None:
+    bus = Bus()
+    dashboard = Dashboard(bus, CONFIG)
+
+    dashboard.set_alerts([alert_row(id=1), alert_row(id=2, status="cancelled")])
+    dashboard.set_accuracy(81.5, 12)
+    snapshot = dashboard.snapshot()
+
+    assert bus.messages == []
+    assert [a.id for a in snapshot.alerts] == [1]
+    assert (snapshot.live_mae_s, snapshot.checked_predictions) == (81.5, 12)
