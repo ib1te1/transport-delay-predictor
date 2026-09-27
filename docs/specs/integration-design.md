@@ -135,6 +135,9 @@ CSV и приём NDTP) и #9 (`matcher`) — соединяются с `api` и
 `predict_timeout_ms` поднимается до 2000 (ориентир кейса — меньше 1–2 с).
 Батч на стороне `api` не режется.
 
+Итог замера (27.09): максимум `/predict` на validate — 329 мс, таймаут
+остаётся 1000 мс. Цифры и обоснование — `docs/performance.md`.
+
 ## 8. Задачи и ветки
 
 Правки открытых PR делают их авторы в своих ветках (§6). Остальное —
@@ -149,7 +152,7 @@ CSV и приём NDTP) и #9 (`matcher`) — соединяются с `api` и
 | Сброс демо | `feature/demo-reset` | Бэкенд | §5 | — | готово, #11 |
 | NDTP-выход проигрывателя | `feature/replay-ndtp-sink` | Бэкенд | §1: кодировщик, сессии по `unit_id`, режим `ingest` без сдвига времени | #8 | не начато: `replay.sink` нет, кодировщика нет, датасет идёт мимо NDTP |
 | Сравнение `cur_dev_s` | `feature/cur-dev-comparison` | ML | §3: прогон test, скрипт, цифры в `ml-model.md` | #9, #7 | не начато: `cur_dev_source: gps`, цифр нет |
-| Замер на validate | `chore/validate-timing` | ML | §7: прогон validate, `api.predict_timeout_ms`, `docs/performance.md` | #7, #8, #9 | не начато: `docs/performance.md` нет, `predict_timeout_ms` — 1000 |
+| Замер на validate | `chore/validate-timing` | ML | §7: прогон validate, `api.predict_timeout_ms`, `docs/performance.md` | #7, #8, #9 | готово: `docs/performance.md`, `scripts/measure-performance.py`, `GET /metrics` у `predictor`; таймаут — по §7 |
 | Инструкция для жюри | `docs/jury-guide` | Бэкенд, Фронтенд | README и инструкция: сценарии А и Б, сброс | все | частично: README описывает запуск, проигрывание, эмулятор и сброс; дашборда, алертов и метрик нет |
 | Сквозные тесты | `test/e2e-system` | Бэкенд | `tests/e2e`, задание `e2e` в CI | #7, #8, #9, #11 | готово в ветке, не влито |
 
@@ -216,10 +219,10 @@ Swagger отвечает у `api` и `predictor`. Причины прогноз�
   клиента WS (`test_07_web.py::test_dashboard_source_uses_the_api`,
   xfail). CORS для origin дашборда `api` отдаёт (`backend-design.md` §7,
   `test_07_web.py::test_api_lets_the_dashboard_origin_read_it`).
-- **Критерий 5.** Нет `GET /metrics` (`test_04_predictions.py`, xfail)
-  и `docs/performance.md`; `api.predict_timeout_ms` не пересмотрен по
-  замеру (§7). У долгоживущих сервисов compose нет политики `restart:`,
-  упавший сервис сам не поднимется. `/ready` есть только у `matcher`.
+- **Критерий 5.** Нет `GET /metrics` у `api` (`test_04_predictions.py`,
+  xfail). Задержку `/predict` отдаёт `GET /metrics` у `predictor`, замер
+  всей системы и решение по `api.predict_timeout_ms` — в
+  `docs/performance.md` (§7). `/ready` есть только у `matcher`.
 
 По спекам:
 
@@ -231,8 +234,6 @@ Swagger отвечает у `api` и `predictor`. Причины прогноз�
 - `system-design.md` §4: таблицы `route_shapes` нет, риска маршрута нет.
 - `system-design.md` §3.4: приёмка `matcher` на test против
   `labels_test.csv` не проводилась (§3 не начат).
-- `system-design.md` §8–9: Sphinx не настроен, `docs/performance.md`
-  нет — оба артефакта требует раздел «Сдача» кейса.
 - `ingest-design.md` §6: outbox рассчитан на одного публикатора; два
   процесса `ingest` публикуют одни строки дважды, окно телеметрии `api`
   дубли не отсеивает.
@@ -257,7 +258,7 @@ Swagger отвечает у `api` и `predictor`. Причины прогноз�
 | --- | --- | --- | --- |
 | 1 | MVP дашборда: карта MapLibre с ТС по снимку и `/ws` (§7.4 `backend-design.md`), цвет по `risk_level`, карточка ТС с прогнозом, причинами и целевой остановкой | Фронтенд | критерии 3, 4; `test_07_web.py` |
 | 2 | Проверка по факту и живой MAE, алерты с `lead_time_s`, `/api/alerts`, `/metrics` | Бэкенд | критерии 2, 5; xfail в `test_04_predictions.py` |
-| 3 | Замер на validate, `api.predict_timeout_ms`, `docs/performance.md` (`chore/validate-timing`) | ML | критерий 5, раздел «Сдача» |
+| 3 | ~~Замер на validate, `api.predict_timeout_ms`, `docs/performance.md` (`chore/validate-timing`)~~ готово | ML | критерий 5, раздел «Сдача» |
 | 4 | Инструкция для жюри: дашборд, алерты, метрики; прямо сказать, что в сценарии А датасет идёт мимо NDTP, а NDTP показывается сценарием Б, и как подключить эмулятор (порт, `unitId`, `intervalMs`) | Бэкенд, Фронтенд | раздел «Сдача» |
 | 5 | `restart: unless-stopped` у долгоживущих сервисов | Бэкенд | критерий 5 |
 | 6 | Sphinx по коду | Бэкенд | раздел «Сдача» |
