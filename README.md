@@ -55,6 +55,23 @@ cd services/api && ../../.venv/Scripts/python -m pytest
 базой и Redis пропускаются. Тесты пакета или сервиса запускаются из его
 папки.
 
+### Документация по коду
+
+Sphinx строит справочник Python API из docstring и сигнатур всех сервисов,
+общих пакетов и ML-ядра. После создания виртуального окружения установите
+зависимости и запустите сборку из корня репозитория:
+
+```bash
+.venv/Scripts/python -m pip install -r requirements-dev.txt -r services/api/requirements.txt -r ml/requirements.txt
+.venv/Scripts/python scripts/build-code-docs.py
+```
+
+На Linux/macOS замените `.venv/Scripts/python` на `.venv/bin/python`.
+Готовый справочник откройте из `data/docs/code/index.html`. Для сборки не
+нужны запущенные Postgres, Redis или сервисы. Исходники документации — в
+`docs/code/`; сборка использует отдельный процесс для каждого сервиса,
+поскольку во всех сервисах пакет называется `app`.
+
 Сквозные тесты всей системы идут на запущенном стеке с синтетическим
 датасетом, подробности — в `tests/e2e/README.md`:
 

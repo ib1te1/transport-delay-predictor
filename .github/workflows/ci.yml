@@ -30,6 +30,7 @@ jobs:
       ml: ${{ steps.select.outputs.ml }}
       ingest: ${{ steps.select.outputs.ingest }}
       e2e: ${{ steps.select.outputs.e2e }}
+      docs: ${{ steps.select.outputs.docs }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,11 +102,18 @@ jobs:
             e2e=false
           fi
           echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
+          if $all || printf '%s\n' "$files" | grep -Eq '^(docs/code/|scripts/build-code-docs[.]py$|services/[^/]+/(app/|requirements[.]txt$)|ml/(busdelay/|requirements[.]txt$)|packages/(common|contracts)/src/|requirements-dev[.]txt$|[.]github/workflows/ci[.]yml$)'; then
+            docs=true
+          else
+            docs=false
+          fi
+          echo "docs=$docs" >> "$GITHUB_OUTPUT"
           echo "tests=$tests"
           echo "web=$web"
           echo "ml=$ml"
           echo "ingest=$ingest"
           echo "e2e=$e2e"
+          echo "docs=$docs"
 
   lint:
     runs-on: ubuntu-latest
@@ -124,6 +132,23 @@ jobs:
       # or a depends_on target that does not exist. The one file all five
       # tracks edit and nothing else here covers.
       - run: docker compose config -q
+
+  docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            services/api/requirements.txt
+            ml/requirements.txt
+      - run: pip install -r requirements-dev.txt -r services/api/requirements.txt -r ml/requirements.txt
+      - run: python scripts/build-code-docs.py
 
   test:
     name: test (${{ matrix.name }})
