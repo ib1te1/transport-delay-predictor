@@ -1,5 +1,7 @@
 """ML core service: ``POST /predict`` answers the api with the delay model.
 
+``GET /model`` says which model answers, ``GET /metrics`` how long the answers take.
+
 The model is loaded once at startup from ``MODEL_DIR``. When the directory is absent, empty
 or the model does not load, the service answers with the organizers' baseline (the
 predicted delay equals the current deviation), so the system starts without a trained
@@ -7,15 +9,18 @@ model and a broken one does not take it down.
 """
 
 import logging
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel
 
 from app.config import PredictorConfig, PredictorSettings
 from app.examples import bus_request
+from app.metrics import Metrics, PredictTimings
 from app.predictor import BaselinePredictor, ModelPredictor, Predictor, load_predictor
 from common.config import load_section
 from contracts import PredictRequest, PredictResponse
@@ -67,10 +72,29 @@ def create_app(settings: PredictorSettings | None = None) -> FastAPI:
         yield
 
     app = FastAPI(title="predictor", lifespan=lifespan)
+    started = datetime.now(UTC)
+    timings = PredictTimings()
 
     def predictor_of(request: Request) -> Predictor:
         # without the lifespan (a bare TestClient) there is no model: the baseline answers
         return getattr(request.app.state, "predictor", None) or BaselinePredictor()
+
+    @app.middleware("http")
+    async def time_predict(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # here and not in the handler, so parsing the body counts too
+        if request.url.path != "/predict":
+            return await call_next(request)
+        start = time.perf_counter()
+        response = await call_next(request)
+        timings.add(
+            (time.perf_counter() - start) * 1000,
+            ok=response.status_code < 400,
+            batch=getattr(request.state, "batch", 0),
+            body_bytes=int(request.headers.get("content-length", 0)),
+        )
+        return response
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -80,7 +104,17 @@ def create_app(settings: PredictorSettings | None = None) -> FastAPI:
     @app.post("/predict")
     def predict(requests: list[PredictRequest], request: Request) -> list[PredictResponse]:
         """Predict the delay at each request's target stop, in request order."""
+        request.state.batch = len(requests)
         return predictor_of(request).predict(requests)
+
+    @app.get("/metrics")
+    def metrics(request: Request) -> Metrics:
+        """How long /predict takes over the last calls, and which model answers it."""
+        return Metrics(
+            model_version=predictor_of(request).version,
+            started=started,
+            predict=timings.summary(),
+        )
 
     @app.get("/model")
     def model(request: Request) -> ModelInfo:
