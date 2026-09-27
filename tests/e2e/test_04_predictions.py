@@ -133,15 +133,6 @@ def test_card_lists_predictions_newest_first(stack: Stack, replayed: Replayed) -
     assert all(t >= clock - timedelta(seconds=1800) for t in times)
 
 
-# Target behaviour from docs/specs/backend-design.md that the api does not
-# implement yet (step 4 of its work order and the endpoint table in §7).
-
-
-@pytest.mark.xfail(
-    reason="backend-design.md §4: stop events do not check predictions yet"
-    " (actual_delay_s/abs_error_s stay null, live_mae_s is null)",
-    strict=False,
-)
 def test_predictions_are_checked_against_arrivals(stack: Stack, replayed: Replayed) -> None:
     checked = stack.compose.count("predictions", "actual_delay_s IS NOT NULL")
     assert checked > 0
@@ -158,7 +149,6 @@ def test_predictions_are_checked_against_arrivals(stack: Stack, replayed: Replay
     assert state["live_mae_s"] is not None
 
 
-@pytest.mark.xfail(reason="backend-design.md §9: GET /metrics is not implemented", strict=False)
 def test_metrics(stack: Stack, replayed: Replayed) -> None:
     metrics = stack.json(f"{API_URL}/metrics")
     for key in (
@@ -172,21 +162,22 @@ def test_metrics(stack: Stack, replayed: Replayed) -> None:
         "live_mae_s",
     ):
         assert key in metrics
+    assert metrics["checked_predictions"] == stack.state()["checked_predictions"]
 
 
-@pytest.mark.xfail(reason="backend-design.md §7: GET /api/alerts is not implemented", strict=False)
 def test_alerts_endpoint(stack: Stack, replayed: Replayed) -> None:
     alerts = stack.json(f"{API_URL}/api/alerts?status=open")
     assert isinstance(alerts, list)
     assert len(alerts) == len(stack.state()["alerts"])
 
 
-@pytest.mark.xfail(reason="backend-design.md §7: GET /api/stops is not implemented", strict=False)
 def test_stops_endpoint(stack: Stack, replayed: Replayed) -> None:
     stops = stack.json(f"{API_URL}/api/stops")
     assert len(stops) == len(synthetic.BUSES) * synthetic.PLANNED_STOPS
 
 
+# Target behaviour from docs/specs/backend-design.md that the api does not
+# implement yet (the endpoint table in §7).
 @pytest.mark.xfail(reason="backend-design.md §7: GET /api/routes is not implemented", strict=False)
 def test_routes_endpoint(stack: Stack, replayed: Replayed) -> None:
     # empty until matcher fills route_shapes, but it must answer

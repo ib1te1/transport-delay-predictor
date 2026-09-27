@@ -28,11 +28,23 @@
 | Дашборд | <http://localhost:5173> |
 | API и Swagger | <http://localhost:8000/docs> |
 | Swagger ML-ядра | <http://localhost:8003/docs> |
+| Время ответа ML-ядра | <http://localhost:8003/metrics> |
+| Метрики цикла прогноза, живой MAE, алерты | <http://localhost:8000/metrics> |
 
 ## Настройки
 
 `config/system.yaml` — по секции на сервис; сервис читает только свою.
 Переменные окружения (порты, адреса) — в `.env.example`.
+
+## Производительность
+
+Задержка прогноза, пропускная способность, отказы и холодный старт —
+`docs/performance.md`. Замер повторяется одной командой, но начинается с
+`docker compose down -v` и стирает состояние демо:
+
+```bash
+python scripts/measure-performance.py
+```
 
 ## Разработка
 

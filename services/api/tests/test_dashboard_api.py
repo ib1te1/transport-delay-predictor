@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import psycopg
 import pytest
-from factories import at, plan_stop, prediction_row, telemetry_record
+from factories import alert_row, at, plan_stop, prediction_row, telemetry_record
 from fastapi.testclient import TestClient
 
 import app.main as main_module
@@ -12,9 +12,10 @@ from app.config import ApiConfig
 from app.dashboard import Dashboard
 from app.live import LiveState
 from app.main import app
+from app.metrics import LoopMetrics
 from app.schemas import NetworkStop, ws_message_schemas
 from app.state import FleetState
-from app.store import save_predictions
+from app.store import AlertCounts, save_predictions
 from common.db import connect
 
 CONFIG = ApiConfig()
@@ -156,6 +157,78 @@ def test_card_returns_the_vehicle_its_predictions_track_and_stops(
     ]
 
 
+def test_alerts_are_read_with_the_status_and_limit_asked(
+    published: Dashboard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = []
+
+    def stored(pool, status, limit):
+        calls.append((status, limit))
+        return [alert_row(id=3, status="confirmed", lead_time_s=720.0)]
+
+    monkeypatch.setattr(main_module, "_alerts", stored)
+    client = TestClient(app)
+
+    response = client.get("/api/alerts?status=confirmed&limit=5")
+    client.get("/api/alerts")
+
+    assert response.status_code == 200
+    assert calls == [("confirmed", 5), (None, 200)]
+    [alert] = response.json()
+    assert (alert["id"], alert["status"], alert["lead_time_s"]) == (3, "confirmed", 720.0)
+
+
+def test_alerts_with_an_unknown_status_are_422(published: Dashboard) -> None:
+    assert TestClient(app).get("/api/alerts?status=late").status_code == 422
+
+
+def test_alerts_are_503_when_postgres_does_not_answer(
+    published: Dashboard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def down(pool, status, limit):
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(main_module, "_alerts", down)
+
+    assert TestClient(app).get("/api/alerts").status_code == 503
+
+
+def test_metrics_combine_the_loop_figures_alerts_and_live_mae(
+    published: Dashboard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    metrics = LoopMetrics()
+    metrics.predict_call(42.0, ok=True)
+    monkeypatch.setattr(app.state, "metrics", metrics, raising=False)
+    monkeypatch.setattr(main_module, "_alert_counts", lambda pool: AlertCounts(1, 2, 3, 700.0))
+    published.set_accuracy(80.0, 5)
+
+    response = TestClient(app).get("/metrics")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["predict_latency_ms"] == {"p50": 42.0, "p95": 42.0, "max": 42.0, "count": 1}
+    assert (body["predict_failures"], body["scoring_tick_ms"], body["stream_lag_s"]) == (
+        0,
+        None,
+        None,
+    )
+    assert body["alerts"] == {"open": 1, "confirmed": 2, "cancelled": 3, "mean_lead_time_s": 700.0}
+    assert body["vehicles_active"] == 1
+    assert (body["live_mae_s"], body["checked_predictions"]) == (80.0, 5)
+
+
+def test_metrics_are_503_when_postgres_does_not_answer(
+    published: Dashboard, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def down(pool):
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(app.state, "metrics", LoopMetrics(), raising=False)
+    monkeypatch.setattr(main_module, "_alert_counts", down)
+
+    assert TestClient(app).get("/metrics").status_code == 503
+
+
 def test_openapi_keeps_app_level_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(main_module.app, "description", "probe")
     monkeypatch.setattr(main_module.app, "openapi_schema", None)
@@ -179,6 +252,11 @@ def test_openapi_describes_the_dashboard_endpoints() -> None:
     }
     assert {"200", "404", "503"} <= set(card)
     assert {"200", "503"} <= set(stops)
+    alerts = schema["paths"]["/api/alerts"]["get"]["responses"]["200"]
+    assert alerts["content"]["application/json"]["schema"]["items"] == {
+        "$ref": "#/components/schemas/AlertView"
+    }
+    assert "/metrics" in schema["paths"]
     # REST responses and WebSocket messages share one definition of each view.
     shared = ws_message_schemas("#/components/schemas/{model}")
     for name in ("VehicleView", "PredictionView", "AlertView", "ReasonCode"):

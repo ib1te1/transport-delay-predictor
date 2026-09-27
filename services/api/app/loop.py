@@ -7,13 +7,19 @@ rebuilds the state from the streams and the current predictions from the
 ``predictions`` table, so it loses nothing they still hold.
 
 Each run also feeds the dashboard: it attaches its state to the
-process's ``Dashboard``, publishes every prediction row there, and
-refreshes the dashboard's view once a second.
+process's ``Dashboard``, publishes every prediction row and alert change
+there, and refreshes the dashboard's view once a second.
+
+Every arrival from ``stop_events`` checks the predictions made for that
+stop and confirms its open alert. On start the run checks all arrivals in
+the stream again, so those that came while api was down are not missed;
+rows already checked stay as they are.
 """
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -23,14 +29,26 @@ from redis.asyncio import Redis
 from app.config import ApiConfig
 from app.dashboard import Dashboard
 from app.live import LiveState
-from app.models import PredictionRow
+from app.metrics import LoopMetrics
+from app.models import AlertRow, PredictionRow
 from app.planner import PlanIndex
 from app.predictor_client import PredictorClient
 from app.scoring import run_tick
 from app.state import FleetState
-from app.store import load_latest_predictions, load_plan, save_predictions
+from app.store import (
+    Accuracy,
+    check_predictions,
+    confirm_alerts,
+    load_accuracy,
+    load_alerts,
+    load_latest_predictions,
+    load_plan,
+    save_predictions,
+    update_alerts,
+)
 from app.streams import feed_stop_events, feed_telemetry, recover_stop_events, recover_telemetry
 from common.bus import PREDICTIONS_STREAM, STOP_EVENTS_STREAM, TELEMETRY_STREAM, append_async
+from contracts import PredictRequest, PredictResponse, StopEvent
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +108,29 @@ def _load_latest(pool: ConnectionPool, since: datetime) -> list[PredictionRow]:
         return load_latest_predictions(conn, since)
 
 
+def _update_alerts(
+    pool: ConnectionPool, rows: list[PredictionRow], segment_from: dict[str, int | None]
+) -> list[AlertRow]:
+    with pool.connection() as conn:
+        return update_alerts(conn, rows, segment_from)
+
+
+def _check_arrivals(
+    pool: ConnectionPool, events: Sequence[StopEvent], *, always_measure: bool = False
+) -> tuple[list[AlertRow], Accuracy | None]:
+    """Check predictions and confirm alerts; the new accuracy, or ``None`` if no row changed."""
+    with pool.connection() as conn:
+        changed = check_predictions(conn, events)
+        confirmed = confirm_alerts(conn, events)
+        accuracy = load_accuracy(conn) if changed or always_measure else None
+    return confirmed, accuracy
+
+
+def _load_open_alerts(pool: ConnectionPool) -> list[AlertRow]:
+    with pool.connection() as conn:
+        return load_alerts(conn, "open")
+
+
 async def run_once(
     pool: ConnectionPool,
     redis: Redis,
@@ -97,6 +138,7 @@ async def run_once(
     config: ApiConfig,
     *,
     dashboard: Dashboard,
+    metrics: LoopMetrics,
     streams: StreamNames = DEFAULT_STREAMS,
 ) -> None:
     """Rebuild the state, then follow the streams, score and feed the dashboard until a failure."""
@@ -109,38 +151,90 @@ async def run_once(
         # Predictions that ended meanwhile are dropped by the first refresh.
         for row in await asyncio.to_thread(_load_latest, pool, state.clock - state.window):
             live.current.put(row)
+    confirmed, accuracy = await asyncio.to_thread(
+        _check_arrivals, pool, state.all_stop_events(), always_measure=True
+    )
+    open_alerts = await asyncio.to_thread(_load_open_alerts, pool)
     dashboard.attach(live)
+    dashboard.set_alerts(open_alerts)
+    dashboard.set_accuracy(*accuracy)
     log.info(
         "prediction loop started: %d planned vehicles, %d vehicles in the window, "
-        "%d current predictions, clock %s",
+        "%d current predictions, %d open alerts, %d checked predictions, clock %s",
         len(plan),
         len(state.vehicles()),
         len(live.current.vehicles()),
+        len(open_alerts),
+        accuracy.checked_predictions,
         state.clock,
     )
+
+    async def publish_alerts(alerts: list[AlertRow]) -> None:
+        try:
+            await dashboard.publish_alerts(alerts)
+        except Exception:
+            log.exception("dashboard update failed for %d alert(s); scoring continues", len(alerts))
+
+    await publish_alerts(confirmed)
+
+    async def predict(requests: Sequence[PredictRequest]) -> list[PredictResponse]:
+        started = time.perf_counter()
+        ok = False
+        try:
+            answers = await predictor.predict(requests)
+            ok = True
+            return answers
+        finally:
+            metrics.predict_call((time.perf_counter() - started) * 1000, ok=ok)
 
     async def save(rows: list[PredictionRow]) -> list[PredictionRow]:
         return await asyncio.to_thread(_save, pool, rows)
 
     async def publish(rows: list[PredictionRow]) -> None:
+        # Alerts follow the rows already saved, in a transaction of their own.
+        metrics.rows_written(rows)
         for row in rows:
             await append_async(redis, streams.predictions, row)
+        segment_from = {
+            row.sample_id: state.last_passed_stop(row.tr_id, row.t)
+            for row in rows
+            if row.risk_level == "red"
+        }
+        alerts = await asyncio.to_thread(_update_alerts, pool, rows, segment_from)
         try:
             await dashboard.publish_predictions(rows)
         except Exception:
             log.exception(
                 "dashboard update failed for %d prediction row(s); scoring continues", len(rows)
             )
+        await publish_alerts(alerts)
 
     async def tick(t: datetime) -> None:
-        await run_tick(
-            t, state, plan, config, predict=predictor.predict, save=save, publish=publish
-        )
+        started = time.perf_counter()
+        rows = await run_tick(t, state, plan, config, predict=predict, save=save, publish=publish)
+        if rows:
+            metrics.tick((time.perf_counter() - started) * 1000)
+
+    async def arrived(event: StopEvent) -> None:
+        confirmed, accuracy = await asyncio.to_thread(_check_arrivals, pool, [event])
+        if accuracy is not None:
+            dashboard.set_accuracy(*accuracy)
+        await publish_alerts(confirmed)
 
     async with asyncio.TaskGroup() as group:
-        group.create_task(feed_telemetry(redis, state, telemetry_id, stream=streams.telemetry))
         group.create_task(
-            feed_stop_events(redis, state, stop_events_id, stream=streams.stop_events)
+            feed_telemetry(
+                redis,
+                state,
+                telemetry_id,
+                stream=streams.telemetry,
+                on_entry=metrics.telemetry_read,
+            )
+        )
+        group.create_task(
+            feed_stop_events(
+                redis, state, stop_events_id, stream=streams.stop_events, on_event=arrived
+            )
         )
         group.create_task(schedule_ticks(state, tick, timedelta(seconds=config.scoring_period_sec)))
         group.create_task(dashboard.run())
@@ -176,12 +270,14 @@ async def run_prediction_loop(
     config: ApiConfig,
     *,
     dashboard: Dashboard,
+    metrics: LoopMetrics | None = None,
     streams: StreamNames = DEFAULT_STREAMS,
     initial_delay: float = 1.0,
     max_delay: float = 30.0,
     sleep: Sleep = asyncio.sleep,
 ) -> None:
     """Keep ``run_once`` going until cancelled, restarting it after any failure."""
+    metrics = metrics or LoopMetrics()
     loop = asyncio.get_running_loop()
     delay = initial_delay
     while True:
@@ -189,7 +285,15 @@ async def run_prediction_loop(
         redis: Redis | None = None
         try:
             redis = Redis.from_url(redis_url)
-            await run_once(pool, redis, predictor, config, dashboard=dashboard, streams=streams)
+            await run_once(
+                pool,
+                redis,
+                predictor,
+                config,
+                dashboard=dashboard,
+                metrics=metrics,
+                streams=streams,
+            )
         except Exception as exc:
             log.warning(
                 "prediction loop failed (%s: %s), restarting in %.1fs",

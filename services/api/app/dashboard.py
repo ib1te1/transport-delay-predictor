@@ -1,10 +1,10 @@
 """The dashboard's side of api: numbered WebSocket messages and the view they add up to.
 
 One ``Dashboard`` per api process publishes every message the dashboard
-channel carries: the per-second clock and vehicles diff, and a message
-per prediction row of a tick. Each message gets the next ``seq`` and is
-published under one lock, so the channel carries them in ``seq`` order
-whichever task sends them. The snapshot is the last published view and
+channel carries: the per-second clock and vehicles diff, a message per
+prediction row of a tick and one per alert that changed. Each message
+gets the next ``seq`` and is published under one lock, so the channel
+carries them in ``seq`` order whichever task sends them. The snapshot is the last published view and
 its ``seq``: snapshot and stream come from the same place, and a client
 that applies every message after the snapshot's ``seq`` ends up where
 api is.
@@ -24,9 +24,11 @@ from redis.exceptions import RedisError
 
 from app.config import ApiConfig
 from app.live import LiveState
-from app.models import PredictionRow
+from app.models import AlertRow, PredictionRow
 from app.schemas import (
+    AlertData,
     AlertMessage,
+    AlertView,
     ClockData,
     ClockMessage,
     PredictionData,
@@ -37,7 +39,7 @@ from app.schemas import (
     VehiclesMessage,
     VehicleView,
 )
-from app.views import card_stops, diff_views, summarize, track
+from app.views import alert_view, card_stops, diff_views, summarize, track
 from common.bus import DASHBOARD_CHANNEL, BusMessage
 
 log = logging.getLogger(__name__)
@@ -90,6 +92,9 @@ class Dashboard:
         self._clock: datetime | None = None
         self._views: dict[int, VehicleView] = {}
         self._live: LiveState | None = None
+        self._alerts: dict[int, AlertView] = {}
+        self._live_mae_s: float | None = None
+        self._checked_predictions = 0
 
     @property
     def seq(self) -> int:
@@ -125,6 +130,27 @@ class Dashboard:
                     seq=self._next_seq(), tr_id=row.tr_id, prediction=live.prediction_view(row)
                 )
                 await self._send(PredictionMessage(type="prediction", data=data))
+
+    def set_alerts(self, rows: Sequence[AlertRow]) -> None:
+        """Take ``rows`` as the open alerts, without a message: the loop reloads them on start."""
+        self._alerts = {row.id: alert_view(row) for row in rows if row.status == "open"}
+
+    async def publish_alerts(self, rows: Sequence[AlertRow]) -> None:
+        """Keep the open alerts for the snapshot and publish an ``alert`` message per row."""
+        async with self._lock:
+            for row in rows:
+                view = alert_view(row)
+                if row.status == "open":
+                    self._alerts[row.id] = view
+                else:
+                    self._alerts.pop(row.id, None)
+                data = AlertData(seq=self._next_seq(), alert=view)
+                await self._send(AlertMessage(type="alert", data=data))
+
+    def set_accuracy(self, live_mae_s: float | None, checked_predictions: int) -> None:
+        """The live MAE and how many predictions it covers, as the snapshot shows them."""
+        self._live_mae_s = live_mae_s
+        self._checked_predictions = checked_predictions
 
     async def refresh(self) -> None:
         """Publish the clock, then the vehicles whose view changed since the last diff.
@@ -169,14 +195,15 @@ class Dashboard:
     def snapshot(self) -> StateSnapshot:
         """The last published view and the ``seq`` of the last published message."""
         views = [self._views[tr_id] for tr_id in sorted(self._views)]
+        alerts = sorted(self._alerts.values(), key=lambda a: (a.opened_at, a.id), reverse=True)
         return StateSnapshot(
             seq=self._seq,
             clock=self._clock,
             vehicles=views,
             summary=summarize(views),
-            alerts=[],
-            live_mae_s=None,
-            checked_predictions=0,
+            alerts=alerts,
+            live_mae_s=self._live_mae_s,
+            checked_predictions=self._checked_predictions,
         )
 
     async def card(self, tr_id: int, load_predictions: LoadPredictions) -> VehicleCard:

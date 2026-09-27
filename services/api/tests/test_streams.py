@@ -178,3 +178,38 @@ async def test_state_rebuilt_after_a_restart_matches_the_live_state(redis_url: s
     for tr_id in live.vehicles():
         assert rebuilt.telemetry(tr_id) == live.telemetry(tr_id)
     assert rebuilt.stop_events(7) == live.stop_events(7)
+
+
+@pytest.mark.anyio
+@pytest.mark.timeout(30)
+async def test_live_feeds_report_each_entry_after_the_state_has_it(redis_url: str) -> None:
+    telemetry, stops = stream_name(), stream_name()
+    redis = Redis.from_url(redis_url)
+    state = FleetState(WINDOW)
+    entries: list[str] = []
+    arrivals: list[tuple[int, bool]] = []
+
+    async def arrived(event) -> None:
+        arrivals.append((event.stop_id, bool(state.stop_events(event.tr_id))))
+
+    feeders = [
+        asyncio.create_task(
+            feed_telemetry(
+                redis, state, "0", stream=telemetry, block_ms=100, on_entry=entries.append
+            )
+        ),
+        asyncio.create_task(
+            feed_stop_events(redis, state, "0", stream=stops, block_ms=100, on_event=arrived)
+        ),
+    ]
+    try:
+        entry_id = await append_async(redis, telemetry, telemetry_record(7, at(0)))
+        await append_async(redis, stops, stop_event(7, 3, at(0), at(30)))
+        await wait_until(lambda: entries and arrivals)
+    finally:
+        await stop(*feeders)
+        await redis.delete(telemetry, stops)
+        await redis.aclose()
+
+    assert entries == [entry_id]
+    assert arrivals == [(3, True)]
