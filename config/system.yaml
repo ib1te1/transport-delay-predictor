@@ -69,8 +69,8 @@ predictor:
 replay:
   # Must match seed.period so telemetry and planned stops share a period.
   period: validate
-  # Six dataset hours play for about 36 real minutes; GPS updates remain visible.
+  # Six and a half dataset hours play for about 39 real minutes.
   speedup: 10
-  start_at: "2026-01-06T10:00:00Z"
-  end_at: "2026-01-06T16:00:00Z"
+  start_at: "2026-01-06T11:30:00Z"
+  end_at: "2026-01-06T18:00:00Z"
   sort_chunk_rows: 20000
