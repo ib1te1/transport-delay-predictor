@@ -11,7 +11,13 @@ export function socketUrl(base: string): string {
 }
 
 export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(apiPath(path), { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000) });
+  let response: Response;
+  try {
+    response = await fetch(apiPath(path), { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000) });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error('Нет ответа от API. Последние данные сохранены.');
+  }
   if (!response.ok) throw new Error(response.status === 404 ? 'Транспорт больше не доступен в текущем прогоне.' : response.status === 503 ? 'Сервис ещё готовит данные. Повторите через несколько секунд.' : `Не удалось получить данные (${response.status}).`);
   return response.json() as Promise<T>;
 }

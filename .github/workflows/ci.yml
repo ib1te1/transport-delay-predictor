@@ -336,7 +336,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
-      # Type check and bundle. The dashboard has no tests yet; until it
-      # does, a build that does not compile is what CI catches here.
+      - run: npm test
+        working-directory: web
+      # Type check and bundle the dashboard.
       - run: npm run build
         working-directory: web

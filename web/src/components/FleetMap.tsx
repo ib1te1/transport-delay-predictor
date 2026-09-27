@@ -69,7 +69,7 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
       const risk = vehicle.freshness === 'offline' ? 'none' : vehicle.prediction?.risk_level ?? 'none';
       element.className = `vehicle-marker ${risk} ${selectedId === vehicle.tr_id ? 'selected' : ''}`;
       element.textContent = `${vehicle.tr_id}`;
-      element.setAttribute('aria-label', `ТС ${vehicle.tr_id}: ${riskLabels[risk]}`);
+      element.setAttribute('aria-label', `ТС ${vehicle.tr_id}: ${vehicle.freshness === 'offline' ? 'нет связи с ТС' : riskLabels[risk]}`);
       element.setAttribute('aria-pressed', String(selectedId === vehicle.tr_id));
       marker.setLngLat([vehicle.lon!, vehicle.lat!]);
     }
@@ -81,12 +81,15 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
   }, [selectedId, ready]);
   useEffect(() => {
     if (!ready || !map.current) return;
-    (map.current.getSource('track') as GeoJSONSource).setData({ type: 'FeatureCollection', features: card && card.track.length > 1 ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: card.track.map(point => [point.lon, point.lat]) } }] : [] });
-    (map.current.getSource('stops') as GeoJSONSource).setData({ type: 'FeatureCollection', features: (card?.stops ?? []).map(stop => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] } })) });
+    const track = map.current.getSource('track') as GeoJSONSource | undefined;
+    const stops = map.current.getSource('stops') as GeoJSONSource | undefined;
+    if (!track || !stops) return;
+    track.setData({ type: 'FeatureCollection', features: card && card.track.length > 1 ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: card.track.map(point => [point.lon, point.lat]) } }] : [] });
+    stops.setData({ type: 'FeatureCollection', features: (card?.stops ?? []).map(stop => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] } })) });
   }, [card, ready]);
   useEffect(() => {
     const instance = map.current;
-    if (!ready || !instance) return;
+    if (!ready || !instance || !instance.isStyleLoaded()) return;
     if (basemap && !instance.getSource('osm')) {
       instance.addSource('osm', { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors', maxzoom: 19 });
       instance.addLayer({ id: 'osm', type: 'raster', source: 'osm', paint: { 'raster-saturation': -0.75, 'raster-opacity': 0.65 } }, 'track-line');
