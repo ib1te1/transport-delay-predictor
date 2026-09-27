@@ -9,8 +9,8 @@ import { networkLines } from '../network';
 import type { NetworkStop, Vehicle, VehicleCard } from '../types';
 import { Icon } from './Icon';
 
-interface Props { vehicles: Vehicle[]; selectedId: number | null; card: VehicleCard | null; onSelect: (id: number) => void }
-export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
+interface Props { vehicles: Vehicle[]; selectedId: number | null; card: VehicleCard | null; onSelect: (id: number) => void; theme: 'dark' | 'light' }
+export function FleetMap({ vehicles, selectedId, card, onSelect, theme }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapInstance | null>(null);
   const markers = useRef<Map<number, Marker>>(new Map());
@@ -125,6 +125,15 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
     }
     if (instance.getLayer('osm')) instance.setLayoutProperty('osm', 'visibility', basemap ? 'visible' : 'none');
   }, [basemap, ready]);
+  useEffect(() => {
+    const instance = map.current;
+    if (!ready || !instance) return;
+    instance.setPaintProperty('network-lines', 'line-color', theme === 'dark' ? '#83aeb8' : '#789ba6');
+    instance.setPaintProperty('track-line', 'line-color', theme === 'dark' ? '#75dfc7' : '#16857a');
+    instance.setPaintProperty('stop-points', 'circle-color', theme === 'dark' ? '#172b39' : '#ffffff');
+    instance.setPaintProperty('stop-points', 'circle-stroke-color', theme === 'dark' ? '#75dfc7' : '#16857a');
+    if (instance.getLayer('osm')) instance.setPaintProperty('osm', 'raster-brightness-max', theme === 'dark' ? 0.55 : 1);
+  }, [theme, ready, basemap]);
   return <section className="map-panel" aria-label="Карта транспорта">
     <div className="map-canvas" ref={container} />
     <div className="map-heading"><span className="eyebrow">ОПЕРАТИВНАЯ КАРТА</span><span>{located.length} ТС с координатами</span></div>

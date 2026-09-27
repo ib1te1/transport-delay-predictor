@@ -1,4 +1,4 @@
-export function Icon({ name, size = 20 }: { name: 'bus' | 'map' | 'search' | 'arrow' | 'close' | 'layers' | 'locate' | 'activity' | 'clock' | 'info' | 'refresh'; size?: number }) {
+export function Icon({ name, size = 20 }: { name: 'bus' | 'map' | 'search' | 'arrow' | 'close' | 'layers' | 'locate' | 'activity' | 'clock' | 'info' | 'refresh' | 'sun' | 'moon'; size?: number }) {
   const paths = {
     bus: <><rect x="5" y="3" width="14" height="16" rx="3" /><path d="M5 11h14M8 7h8M8 19v2m8-2v2" /><path d="M8 15h1m6 0h1" /></>,
     map: <><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z" /><path d="M9 3v15m6-12v15" /></>,
@@ -11,6 +11,8 @@ export function Icon({ name, size = 20 }: { name: 'bus' | 'map' | 'search' | 'ar
     clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
     info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v1" /></>,
     refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1" /></>,
+    sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></>,
+    moon: <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" />,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
