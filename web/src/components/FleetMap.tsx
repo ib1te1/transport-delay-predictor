@@ -90,6 +90,18 @@ export function FleetMap({ vehicles, selectedId, card, onSelect, theme }: Props)
       if (!marker) {
         const button = document.createElement('button');
         button.type = 'button';
+        const label = document.createElement('span');
+        label.className = 'vehicle-marker-label';
+        const icon = document.createElement('span');
+        icon.className = 'vehicle-marker-icon';
+        const image = document.createElement('img');
+        image.src = '/bus-marker.png';
+        image.alt = '';
+        image.width = 38;
+        image.height = 38;
+        image.draggable = false;
+        icon.append(image);
+        button.append(label, icon);
         button.addEventListener('click', () => select.current(vehicle.tr_id));
         marker = new maplibregl.Marker({ element: button }).setLngLat([vehicle.lon!, vehicle.lat!]).addTo(instance);
         markers.current.set(vehicle.tr_id, marker);
@@ -97,7 +109,7 @@ export function FleetMap({ vehicles, selectedId, card, onSelect, theme }: Props)
       const element = marker.getElement();
       const risk = vehicle.freshness === 'offline' ? 'none' : vehicle.prediction?.risk_level ?? 'none';
       element.className = `vehicle-marker ${risk} ${selectedId === vehicle.tr_id ? 'selected' : ''}`;
-      element.textContent = `${vehicle.tr_id}`;
+      element.querySelector('.vehicle-marker-label')!.textContent = `${vehicle.tr_id}`;
       element.setAttribute('aria-label', `ТС ${vehicle.tr_id}: ${vehicle.freshness === 'offline' ? 'нет связи с ТС' : riskLabels[risk]}`);
       element.setAttribute('aria-pressed', String(selectedId === vehicle.tr_id));
       marker.setLngLat([vehicle.lon!, vehicle.lat!]);
