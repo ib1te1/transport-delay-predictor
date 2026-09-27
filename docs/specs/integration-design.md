@@ -214,10 +214,8 @@ Swagger отвечает у `api` и `predictor`. Причины прогноз�
 - **Критерий 4.** Дашборда нет: `web/src/App.tsx` выводит только
   заглушку — ни карты MapLibre, ни цвета риска, ни карточки инцидента, ни
   клиента WS (`test_07_web.py::test_dashboard_source_uses_the_api`,
-  xfail). CORS закрыт (`backend-design.md` §7, ветка `feature/api-cors`):
-  `api` отдаёт `Access-Control-Allow-Origin` для origin дашборда, REST из
-  дашборда больше не блокируется браузером
-  (`test_07_web.py::test_api_lets_the_dashboard_origin_read_it`).
+  xfail). CORS для origin дашборда `api` отдаёт (`backend-design.md` §7,
+  `test_07_web.py::test_api_lets_the_dashboard_origin_read_it`).
 - **Критерий 5.** Нет `GET /metrics` (`test_04_predictions.py`, xfail)
   и `docs/performance.md`; `api.predict_timeout_ms` не пересмотрен по
   замеру (§7). У долгоживущих сервисов compose нет политики `restart:`,
@@ -257,7 +255,7 @@ Swagger отвечает у `api` и `predictor`. Причины прогноз�
 
 | # | Задача | Трек | Закрывает |
 | --- | --- | --- | --- |
-| 1 | ~~CORS в `api`~~ (закрыто: `backend-design.md` §7, ветка `feature/api-cors`) и MVP дашборда: карта MapLibre с ТС по снимку и `/ws` (§7.4 `backend-design.md`), цвет по `risk_level`, карточка ТС с прогнозом, причинами и целевой остановкой | ~~Бэкенд (CORS)~~, Фронтенд | критерии 3, 4; `test_07_web.py` |
+| 1 | MVP дашборда: карта MapLibre с ТС по снимку и `/ws` (§7.4 `backend-design.md`), цвет по `risk_level`, карточка ТС с прогнозом, причинами и целевой остановкой | Фронтенд | критерии 3, 4; `test_07_web.py` |
 | 2 | Проверка по факту и живой MAE, алерты с `lead_time_s`, `/api/alerts`, `/metrics` | Бэкенд | критерии 2, 5; xfail в `test_04_predictions.py` |
 | 3 | Замер на validate, `api.predict_timeout_ms`, `docs/performance.md` (`chore/validate-timing`) | ML | критерий 5, раздел «Сдача» |
 | 4 | Инструкция для жюри: дашборд, алерты, метрики; прямо сказать, что в сценарии А датасет идёт мимо NDTP, а NDTP показывается сценарием Б, и как подключить эмулятор (порт, `unitId`, `intervalMs`) | Бэкенд, Фронтенд | раздел «Сдача» |
