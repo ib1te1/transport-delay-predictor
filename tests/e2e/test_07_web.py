@@ -7,13 +7,14 @@ def test_dashboard_source_uses_the_api(stack: Stack) -> None:
     app = stack.get(f"{WEB_URL}/src/App.tsx")
     client = stack.get(f"{WEB_URL}/src/client.ts")
     hook = stack.get(f"{WEB_URL}/src/useDashboard.ts")
-    map_source = stack.get(f"{WEB_URL}/src/components/FleetMap.tsx")
-    assert all(response.status_code == 200 for response in (app, client, hook, map_source))
+    network = stack.get(f"{WEB_URL}/src/useNetwork.ts")
+    assert all(response.status_code == 200 for response in (app, client, hook, network))
     assert "useDashboard" in app.text and "FleetMap" in app.text
+    assert "useNetwork" in app.text
     assert "/api/state" in client.text
     assert "/api/vehicles/" in hook.text
     assert "/ws" in client.text
-    assert "/api/stops" in map_source.text
+    assert "/api/stops" in network.text
     state = stack.state()
     assert isinstance(state["vehicles"], list) and isinstance(state["seq"], int)
 
