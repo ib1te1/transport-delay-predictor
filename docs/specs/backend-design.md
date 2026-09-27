@@ -192,7 +192,7 @@
 через `CORSMiddleware` (Starlette/FastAPI). Список разрешённых origin —
 `api.cors_origins` в конфиге (список строк), по умолчанию
 `["http://localhost:5173", "http://127.0.0.1:5173"]`, поэтому конфиг без
-этого ключа (например, `tests/e2e/config/system.yaml`) тоже работает.
+этого ключа тоже работает.
 При доступе с других машин (`BIND_ADDR=0.0.0.0`) в `cors_origins`
 добавляется внешний адрес дашборда. Разрешён только `GET` (и preflight
 `OPTIONS`, его обрабатывает сама middleware); credentials выключены,
