@@ -99,10 +99,8 @@ def test_e2e_config_differs_from_the_main_one_only_where_intended() -> None:
             "    telemetry_window_sec: 9000\n",
         )
         .replace(
-            "  # Six and a half dataset hours play for about 39 real minutes.\n"
-            "  speedup: 10\n",
-            "  # E2E runs the synthetic period in about ten seconds.\n"
-            "  speedup: 240\n",
+            "  # Six and a half dataset hours play for about 39 real minutes.\n  speedup: 10\n",
+            "  # E2E runs the synthetic period in about ten seconds.\n  speedup: 240\n",
         )
         .replace('  start_at: "2026-01-06T11:30:00Z"\n', "  start_at: null\n")
         .replace('  end_at: "2026-01-06T18:00:00Z"\n', "  end_at: null\n")
