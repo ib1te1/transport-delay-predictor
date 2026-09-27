@@ -47,7 +47,13 @@ ingest:
     max_frame_bytes: 65535
     # Required in emulator mode: its first packet maps to this dataset time.
     dataset_anchor: null
-matcher: {}
+matcher:
+  # Publisher idle wait and the first retry delay after an input error.
+  poll_interval_sec: 0.25
+  # Telemetry entries per transaction.
+  batch_size: 500
+  # How long one read waits for new telemetry.
+  block_ms: 1000
 predictor:
   # Where cur_dev_s comes from. gps: estimated from the request's telemetry,
   # the way the model saw it in training; the value sent by the api fills in

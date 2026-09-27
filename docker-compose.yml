@@ -144,6 +144,9 @@ services:
     build:
       context: .
       dockerfile: services/matcher/Dockerfile
+    healthcheck:
+      <<: *backend-healthcheck
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/ready"]
     ports:
       - "127.0.0.1:8002:8000"
 
