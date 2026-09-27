@@ -14,6 +14,7 @@ x-backend-healthcheck: &backend-healthcheck
   start_period: 15s
 
 x-backend: &backend
+  restart: unless-stopped
   environment: *backend-env
   volumes:
     # Read-only and outside the image: editing system.yaml needs a
@@ -32,6 +33,7 @@ x-backend: &backend
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-delay_predictor}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-delay_predictor}
@@ -54,6 +56,7 @@ services:
   # must match the tag that actually runs.
   redis:
     image: redis:7.2-alpine
+    restart: unless-stopped
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     healthcheck:
@@ -132,6 +135,7 @@ services:
   # points at ingest:9201 on the same compose network.
   emulator:
     image: ndtp-telemetry-emulator:1.0
+    restart: unless-stopped
     profiles: ["emulator"]
     depends_on:
       ingest:
@@ -198,6 +202,7 @@ services:
   # needs nothing from api to start, hence service_started.
   web:
     build: ./web
+    restart: unless-stopped
     environment:
       VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
     depends_on:
