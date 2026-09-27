@@ -1,0 +1,76 @@
+# e2e copy of config/system.yaml. Differences: replay.speedup, so the
+# synthetic 42 minutes play in about ten seconds. Keep the rest in sync.
+
+# Runtime settings, one top-level section per service. Each service reads
+# only its own section and rejects unknown keys in it. A value that changes
+# behaviour lives here, not in code. Exception: the shared `dataset`
+# section below, which any service may read; the backend owns it.
+
+dataset:
+  # Dataset timestamps carry no zone; they are read in this one.
+  source_timezone: UTC
+
+api:
+  # Prediction tick, in dataset time.
+  scoring_period_sec: 60
+  # A vehicle silent longer than this is predicted from its last state and
+  # flagged degraded; longer than drop_after_sec it leaves the cycle.
+  stale_after_sec: 120
+  drop_after_sec: 900
+  predict_timeout_ms: 1000
+  # Track length shown in the vehicle card.
+  card_track_sec: 1800
+  # What the model needs, measured on test (docs/specs/ml-model.md): 150
+  # minutes of telemetry to see the previous loop, and the plan from the
+  # start of the day, where trips are counted from. With 30 minutes and 1
+  # hour the MAE grows by 4 s.
+  request:
+    telemetry_window_sec: 9000
+    schedule_back_sec: 86400
+  # Predicted delay, seconds. Inside green: on schedule. Above red_above:
+  # red. Everything else, including early by more than green's lower
+  # bound, is yellow. Defaults follow the organizers' early/late classes.
+  risk:
+    green: [-60, 120]
+    red_above: 300
+
+seed:
+  # Dataset part loaded as the demo period: train | test | validate.
+  # Why validate: docs/specs/integration-design.md, section 2.
+  period: validate
+
+ingest:
+  # CSV replay and NDTP emulator are separate demo modes. They must not
+  # advance the same dataset clock at the same time.
+  mode: replay
+  ndtp:
+    host: 0.0.0.0
+    port: 9201
+    read_timeout_sec: 10
+    max_frame_bytes: 65535
+    # Required in emulator mode: its first packet maps to this dataset time.
+    dataset_anchor: null
+matcher:
+  # Publisher idle wait and the first retry delay after an input error.
+  poll_interval_sec: 0.25
+  # Telemetry entries per transaction.
+  batch_size: 500
+  # How long one read waits for new telemetry.
+  block_ms: 1000
+predictor:
+  # Where cur_dev_s comes from. gps: estimated from the request's telemetry,
+  # the way the model saw it in training; the value sent by the api fills in
+  # only when the estimate fails. request: as sent.
+  cur_dev_source: gps
+  # A forecast made from a position older than this, or without one, gets
+  # the stale_telemetry reason. The api flags only silent vehicles
+  # (stale_after_sec above); in the test part 8% of points keep reporting
+  # without a valid position for longer.
+  stale_after_sec: 120
+replay:
+  # Must match seed.period so telemetry and planned stops share a period.
+  period: validate
+  speedup: 240
+  start_at: null
+  end_at: null
+  sort_chunk_rows: 20000
