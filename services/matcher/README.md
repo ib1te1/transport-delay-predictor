@@ -5,6 +5,11 @@
 `stop_events` по общему контракту `StopEvent`. Детали алгоритма и границы
 решения — в [спецификации](../../docs/specs/matcher-design.md).
 
+Офлайн-проверка того же детектора на `train` или `test` запускается без
+Postgres и Redis: `python -m app.evaluate --split train`. Датасет должен
+лежать в `data/dataset`; параметры, метрики и формат отчёта описаны в
+[инструкции](../../docs/matcher-evaluation.md).
+
 После `docker compose up --build` проверьте
 `http://127.0.0.1:8002/ready`: ответ `ready` означает доступность БД,
 Redis и обоих фоновых обработчиков. `input_failing` — не проходит
