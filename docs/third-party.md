@@ -41,6 +41,7 @@
 | ruff | 0.16.8 | линтер | MIT |
 | pytest | 9.1.1 | тесты | MIT |
 | pytest-timeout | 2.4.0 | таймаут для тестов, которые иначе могут зависнуть навсегда | MIT |
+| Sphinx | 9.1.0 | генерация документации Python-кода | BSD-2-Clause |
 | websockets | 17.1 | клиент WebSocket в сквозных тестах (`tests/e2e`) | BSD-3-Clause |
 | Node.js | 24 LTS | среда сборки фронтенда | MIT |
 | React | 18.3.1 | дашборд | MIT |
