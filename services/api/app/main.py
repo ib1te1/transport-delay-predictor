@@ -8,6 +8,7 @@ from typing import Any
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from psycopg_pool import ConnectionPool
 from redis.asyncio import Redis
 
@@ -66,7 +67,7 @@ def configure_logging() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     settings = ServiceSettings()
-    config = load_section(settings.config_path, "api", ApiConfig)
+    config = _config
     app.state.hub = Hub()
     # Opened without waiting: the loop retries until Postgres answers, and
     # the API must come up even while it does not.
@@ -99,7 +100,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(pool.close)
 
 
+class _ConfigLocation(ServiceSettings):
+    """Only where the config file is: connection URLs are checked at startup."""
+
+    database_url: str | None = None
+    redis_url: str | None = None
+
+
+# Read at import, not in the lifespan: middleware cannot be added once the
+# app has been called, and the lifespan is itself such a call.
+_config = load_section(_ConfigLocation().config_path, "api", ApiConfig)
+
 app = FastAPI(title="api", lifespan=lifespan)
+# The dashboard is served from another origin (backend-design.md §7).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_config.cors_origins,
+    allow_methods=["GET"],
+    allow_credentials=False,
+)
 _fastapi_openapi = app.openapi
 
 

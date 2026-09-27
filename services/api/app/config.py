@@ -34,6 +34,7 @@ class ApiConfig(StrictModel):
     drop_after_sec: int = 900
     predict_timeout_ms: int = 1000
     card_track_sec: int = 1800
+    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     request: RequestConfig = RequestConfig()
     risk: RiskConfig = RiskConfig()
 

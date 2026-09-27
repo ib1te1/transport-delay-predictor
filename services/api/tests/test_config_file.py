@@ -11,6 +11,11 @@ def test_repository_config_has_valid_api_section():
     config = load_section(SYSTEM_YAML, "api", ApiConfig)
     assert config.risk.green == (-60.0, 120.0)
     assert config.request.telemetry_window_sec > 0
+    assert "http://localhost:5173" in config.cors_origins
+
+
+def test_api_config_allows_the_local_dashboard_without_the_key():
+    assert ApiConfig().cors_origins == ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 
 def test_repository_config_has_valid_seed_section():
