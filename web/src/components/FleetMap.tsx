@@ -4,13 +4,15 @@ import type { GeoJSONSource, Map as MapInstance, Marker } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { hasPosition } from '../protocol';
 import { riskLabels } from '../format';
-import { getJson } from '../client';
 import { networkLines } from '../network';
 import type { NetworkStop, Vehicle, VehicleCard } from '../types';
 import { Icon } from './Icon';
 
-interface Props { vehicles: Vehicle[]; selectedId: number | null; card: VehicleCard | null; onSelect: (id: number) => void }
-export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
+interface Props {
+  vehicles: Vehicle[]; selectedId: number | null; card: VehicleCard | null; onSelect: (id: number) => void;
+  network: NetworkStop[] | null; networkError: boolean;
+}
+export function FleetMap({ vehicles, selectedId, card, onSelect, network, networkError }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapInstance | null>(null);
   const markers = useRef<Map<number, Marker>>(new Map());
@@ -20,8 +22,6 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
   const [mapError, setMapError] = useState(false);
   const [tileError, setTileError] = useState(false);
   const [basemap, setBasemap] = useState(false);
-  const [network, setNetwork] = useState<NetworkStop[] | null>(null);
-  const [networkError, setNetworkError] = useState(false);
   const located = vehicles.filter(hasPosition);
   const fit = () => {
     if (!map.current || (!located.length && !network?.length)) return;
@@ -56,23 +56,6 @@ export function FleetMap({ vehicles, selectedId, card, onSelect }: Props) {
     observer.observe(container.current);
     const currentMarkers = markers.current;
     return () => { observer.disconnect(); currentMarkers.forEach(marker => marker.remove()); currentMarkers.clear(); instance.remove(); map.current = null; };
-  }, []);
-  useEffect(() => {
-    const controller = new AbortController();
-    let retry: ReturnType<typeof setTimeout>;
-    const load = async () => {
-      try {
-        const stops = await getJson<NetworkStop[]>('/api/stops', controller.signal);
-        if (!controller.signal.aborted) { setNetwork(stops); setNetworkError(false); }
-      } catch {
-        if (!controller.signal.aborted) {
-          setNetworkError(true);
-          retry = setTimeout(() => void load(), 15000);
-        }
-      }
-    };
-    void load();
-    return () => { controller.abort(); clearTimeout(retry); };
   }, []);
   useEffect(() => {
     if (!ready || !map.current || network === null) return;

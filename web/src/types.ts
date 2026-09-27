@@ -17,7 +17,7 @@ export interface Vehicle {
 export interface Alert {
   id: number; tr_id: number; target_stop_id: number; segment_from_stop_id: number | null;
   status: 'open' | 'confirmed' | 'cancelled'; opened_at: string; closed_at: string | null;
-  predicted_delay_s: number; reasons: string[]; actual_delay_s: number | null; lead_time_s: number | null;
+  predicted_delay_s: number; reasons: Reason[]; actual_delay_s: number | null; lead_time_s: number | null;
 }
 export interface Summary {
   risk: Record<Risk | 'none', number>;
