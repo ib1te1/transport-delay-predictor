@@ -34,6 +34,8 @@ models/*
 *.parquet
 *.csv
 !data/fixtures/**/*.csv
+# The synthetic dataset of the end-to-end suite.
+!tests/e2e/data/**/*.csv
 
 # Env & local
 .env

@@ -1,0 +1,31 @@
+# Override for the end-to-end suite, used on top of the main file:
+#
+#   docker compose -f docker-compose.yml -f tests/e2e/docker-compose.e2e.yml up --build --wait
+#
+# Paths are relative to the project directory (the repository root). The
+# synthetic dataset replaces data/dataset, and the e2e config replaces
+# config/system.yaml; config/assumptions.yaml stays the real one. Volumes
+# merge by container path, so /config and /models keep their main mounts.
+#
+# ingest listens for NDTP (mode: emulator) so the suite can send frames,
+# replay plays CSV with its own config (mode: replay).
+
+x-e2e-volumes: &e2e-volumes
+  - ./tests/e2e/data:/data:ro
+  - ./tests/e2e/config/system.yaml:/config/system.yaml:ro
+
+services:
+  seed:
+    volumes: *e2e-volumes
+  replay:
+    volumes: *e2e-volumes
+  matcher:
+    volumes: *e2e-volumes
+  predictor:
+    volumes: *e2e-volumes
+  api:
+    volumes: *e2e-volumes
+  ingest:
+    volumes:
+      - ./tests/e2e/data:/data:ro
+      - ./tests/e2e/config/ingest-ndtp.yaml:/config/system.yaml:ro
