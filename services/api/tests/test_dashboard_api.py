@@ -71,8 +71,13 @@ def test_stops_return_the_planned_network(
         "_network_stops",
         lambda pool: [
             NetworkStop(
-                route_id=7, stop_order=1, stop_id=20, address="Lenina 1",
-                lat=55.75, lon=37.62, time_plan=at(720),
+                route_id=7,
+                stop_order=1,
+                stop_id=20,
+                address="Lenina 1",
+                lat=55.75,
+                lon=37.62,
+                time_plan=at(720),
             )
         ],
     )
@@ -80,10 +85,17 @@ def test_stops_return_the_planned_network(
     response = TestClient(app).get("/api/stops")
 
     assert response.status_code == 200
-    assert response.json() == [{
-        "route_id": 7, "stop_order": 1, "stop_id": 20, "address": "Lenina 1",
-        "lat": 55.75, "lon": 37.62, "time_plan": "2026-01-06T08:12:00Z",
-    }]
+    assert response.json() == [
+        {
+            "route_id": 7,
+            "stop_order": 1,
+            "stop_id": 20,
+            "address": "Lenina 1",
+            "lat": 55.75,
+            "lon": 37.62,
+            "time_plan": "2026-01-06T08:12:00Z",
+        }
+    ]
 
 
 def test_stops_are_503_when_database_is_unavailable(

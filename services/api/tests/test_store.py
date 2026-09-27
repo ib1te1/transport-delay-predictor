@@ -52,7 +52,10 @@ def test_load_network_stops_numbers_each_run_by_time_then_id(db_conn) -> None:
     stops = load_network_stops(db_conn)
 
     assert [(s.route_id, s.stop_order, s.stop_id) for s in stops] == [
-        (7, 1, 1), (7, 2, 2), (7, 3, 3), (8, 1, 4)
+        (7, 1, 1),
+        (7, 2, 2),
+        (7, 3, 3),
+        (8, 1, 4),
     ]
 
 
