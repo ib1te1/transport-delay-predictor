@@ -10,6 +10,7 @@ import psycopg
 
 from app.models import PlanStop, PredictionRow
 from app.planner import PlanIndex
+from app.schemas import NetworkStop
 from common.db import fetch_models, insert_models
 
 
@@ -25,6 +26,18 @@ def load_plan(conn: psycopg.Connection) -> PlanIndex:
     for stop in stops:
         plan.setdefault(stop.tr_id, []).append(stop)
     return plan
+
+
+def load_network_stops(conn: psycopg.Connection) -> list[NetworkStop]:
+    """All planned stops, numbered within each vehicle run."""
+    return fetch_models(
+        conn,
+        NetworkStop,
+        "SELECT tr_id AS route_id,"
+        " ROW_NUMBER() OVER (PARTITION BY tr_id ORDER BY time_plan, stop_id) AS stop_order,"
+        " stop_id, address, lat, lon, time_plan FROM stops_plan"
+        " ORDER BY route_id, stop_order",
+    )
 
 
 def save_predictions(conn: psycopg.Connection, rows: list[PredictionRow]) -> list[PredictionRow]:

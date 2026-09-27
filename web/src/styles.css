@@ -610,6 +610,19 @@ button:focus-visible,input:focus-visible,h2:focus-visible {
   font-size:11px;
   color:#6f5825
 }
+.network-warning {
+  position:absolute;
+  z-index:4;
+  top:85px;
+  left:17px;
+  max-width:220px;
+  background:#fff8e8;
+  border:1px solid #e4c679;
+  border-radius:5px;
+  padding:9px;
+  font-size:11px;
+  color:#6f5825
+}
 .map-footnote {
   position:absolute;
   z-index:2;

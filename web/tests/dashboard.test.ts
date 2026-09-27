@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { delay } from '../src/format.ts';
+import { networkLines } from '../src/network.ts';
 import { applyMessage, mergeHistory, reconcile, SequenceGap, summarize } from '../src/protocol.ts';
 import type { Message, Prediction, Snapshot, Vehicle } from '../src/types.ts';
 
@@ -63,4 +64,15 @@ test('card history applies only newer selected-vehicle events, deduplicated by s
     { type: 'prediction', data: { seq: 10, tr_id: 7, prediction: next } },
   ];
   assert.deepEqual(mergeHistory(card, 7, messages).predictions.map(item => item.sample_id), ['sample-2', 'sample-1']);
+});
+
+test('network lines stay within each run and follow stop order', () => {
+  const stop = (route_id: number, stop_order: number, lon: number) => ({
+    route_id, stop_order, stop_id: route_id * 10 + stop_order,
+    address: null, lat: 55, lon, time_plan: '2026-01-06T08:00:00Z',
+  });
+  const lines = networkLines([stop(7, 2, 2), stop(8, 1, 8), stop(7, 1, 1), stop(7, 3, 3)]);
+  assert.equal(lines.features.length, 1);
+  assert.equal(lines.features[0].properties?.route_id, 7);
+  assert.deepEqual(lines.features[0].geometry.coordinates, [[1, 55], [2, 55], [3, 55]]);
 });
