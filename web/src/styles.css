@@ -1044,6 +1044,67 @@ button:focus-visible,input:focus-visible,h2:focus-visible {
   font-size:11px;
   line-height:1.6
 }
+.welcome-panel .detail-scroll {
+  flex:1
+}
+.incident-panel {
+  padding:4px 0 6px
+}
+.incident-list {
+  list-style:none;
+  margin:0;
+  padding:0;
+  display:flex;
+  flex-direction:column;
+  gap:8px
+}
+.incident-item,.incident-card {
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  text-align:left;
+  background:#fdf6f5;
+  border:1px solid #efd3d0;
+  border-left:4px solid #c9504f;
+  border-radius:6px;
+  padding:10px 11px;
+  color:#3a5564
+}
+.incident-item:hover {
+  background:#fbeeec
+}
+.incident-card {
+  margin-bottom:14px
+}
+.incident-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px
+}
+.incident-head strong {
+  font-size:12px;
+  color:#2d4a59
+}
+.incident-segment {
+  font-size:10px;
+  line-height:1.4;
+  color:#3f5d6b
+}
+.incident-meta {
+  font-size:9px;
+  color:#8196a0
+}
+.incident-empty,.incident-hint {
+  font-size:10px;
+  line-height:1.5;
+  color:#7e939d;
+  margin:0
+}
+.incident-hint {
+  margin-top:12px
+}
 .quality-panel {
   margin:15px 18px 20px;
   border:1px solid #e3ebed;
